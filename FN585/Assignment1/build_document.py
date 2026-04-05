@@ -216,10 +216,13 @@ q4_text = (
     f"inflt has a non-zero mean but no clear linear trend. Under drift the ADF test statistic "
     f"is {fmt(R['q4_stat'], 4)}, compared with critical values of {fmt(R['q4_cval_1pct'], 2)} "
     f"(1%), {fmt(R['q4_cval_5pct'], 2)} (5%), and {fmt(R['q4_cval_10pct'], 2)} (10%). The "
-    f"test statistic is more negative than the 10% critical value but not more negative than "
-    f"the 5% value, so we cannot reject the null of a unit root at the 5% significance level. "
-    f"Taken together the visual, ACF, and formal test evidence all point to inflt being "
-    f"non-stationary, or I(1)."
+    f"test statistic of {fmt(R['q4_stat'], 4)} is more negative than the 5% critical value "
+    f"but not more negative than the 1% value, so we reject the unit root null at the 5% "
+    f"level but not at 1%. This is a borderline result. ADF tests are known to have low "
+    f"power when a series exhibits structural breaks or shifts in mean, as inflt clearly "
+    f"does across the Volcker disinflation. The strong visual evidence of a non-constant "
+    f"mean, the slow ACF decay, and the failure to reject at 1% all support treating inflt "
+    f"as I(1) for modelling purposes."
 )
 add_para(doc, q4_text)
 
@@ -231,13 +234,16 @@ add_heading(doc, 5, "Stationarity of Delta inflt")
 q5_text = (
     f"If inflt is I(1) then delta inflt should be I(0). The time-series plot of delta inflt "
     f"in Figure 4 oscillates around zero with no visible trend or drifting mean. The ACF "
-    f"drops off immediately, with a lag-1 value of just {fmt(R['diff_acf_lag1'], 4)}. For "
-    f"the ADF test I use type=\"none\" because once a series has been differenced there is "
-    f"no reason to expect a non-zero intercept or deterministic trend. The test statistic is "
-    f"{fmt(R['q5_stat'], 4)}, far more negative than the 1% critical value of "
-    f"{fmt(R['q5_cval_1pct'], 2)} (5%: {fmt(R['q5_cval_5pct'], 2)}, 10%: "
-    f"{fmt(R['q5_cval_10pct'], 2)}). We reject the null at the 1% level with no ambiguity. "
-    f"Delta inflt is stationary, confirming that inflation is integrated of order one."
+    f"drops off immediately, with a lag-1 value of just {fmt(R['diff_acf_lag1'], 4)}. "
+    f"I run ur.df() under all three specifications. The type=\"trend\" and type=\"drift\" "
+    f"results are redundant here since a differenced series should have neither a "
+    f"deterministic trend nor a non-zero mean, but they are estimated for completeness "
+    f"and both reject the unit root null at the 1% level. The most appropriate specification "
+    f"is type=\"none\". The test statistic under this specification is {fmt(R['q5_stat'], 4)}, "
+    f"far more negative than the 1% critical value of {fmt(R['q5_cval_1pct'], 2)} "
+    f"(5%: {fmt(R['q5_cval_5pct'], 2)}, 10%: {fmt(R['q5_cval_10pct'], 2)}). We reject "
+    f"the null at the 1% level with no ambiguity. Delta inflt is stationary, confirming "
+    f"that inflation is integrated of order one."
 )
 add_para(doc, q5_text)
 
@@ -265,16 +271,17 @@ add_heading(doc, 7, "Stationarity of the Unemployment Rate")
 q7_text = (
     f"The unemployment rate plot in Figure 7 shows cyclical fluctuations that recur "
     f"every few years but no sustained upward or downward trend, so the drift "
-    f"specification is appropriate for the ADF test. The test statistic under drift is "
+    f"specification is appropriate for the ADF test. I run ur.df() under all three "
+    f"specifications for completeness. Under drift, the test statistic is "
     f"{fmt(R['q7_stat'], 4)} against critical values of {fmt(R['q7_cval_1pct'], 2)} (1%), "
     f"{fmt(R['q7_cval_5pct'], 2)} (5%), and {fmt(R['q7_cval_10pct'], 2)} (10%). The "
-    f"statistic is more negative than the 10% value but fails to beat the 5% critical "
-    f"value, so we cannot reject the unit root null at conventional significance levels. "
-    f"This result should be read carefully. Unemployment is bounded between 0 and 100 in "
-    f"theory and between roughly 3 and 11 in practice, so a true unit root is implausible "
-    f"in the long run. The series is more likely highly persistent with a near-unit root "
-    f"in finite samples. For modelling purposes we treat it as non-stationary or "
-    f"near-integrated over this sample."
+    f"statistic of {fmt(R['q7_stat'], 4)} is extremely close to the 5% critical value and "
+    f"does not reject at the 1% level, so we cannot reject the unit root null at "
+    f"conventional 1% significance. This result should be read carefully. Unemployment "
+    f"is bounded between 0 and 100 in theory and between roughly 3 and 11 in practice, "
+    f"so a true unit root is implausible in the long run. The series is more likely "
+    f"highly persistent with a near-unit root in finite samples. For modelling purposes "
+    f"we treat it as non-stationary or near-integrated over this sample."
 )
 add_para(doc, q7_text)
 add_figure(doc, "figures/fig7_urate.png",
