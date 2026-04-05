@@ -30,10 +30,10 @@ usmac <- read_xlsx("us_macro_quarterly.xlsx",
                    sheet = 1,
                    col_types = c("text", rep("numeric", 9)))
 
-# Rename columns (as per course convention)
-colnames(usmac) <- c("Date", "GDPC96", "PCECTPI", "CPIAUCSL",
-                      "UNRATE", "GS10", "GS1", "TB3MS",
-                      "EXUSUK", "JAPAN_IP")
+# Rename columns to match actual Excel column order
+colnames(usmac) <- c("Date", "GDPC96", "JAPAN_IP", "PCECTPI",
+                      "GS10", "GS1", "TB3MS", "UNRATE",
+                      "EXUSUK", "CPIAUCSL")
 
 # Convert date column to yearqtr format (Week 3 convention)
 usmac$Date <- as.yearqtr(usmac$Date, format = "%Y:0%q")
