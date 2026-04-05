@@ -33,6 +33,15 @@ def force_arial(run):
     rFonts.set(qn("w:cs"), "Arial")
     rPr.insert(0, rFonts)
 
+def force_courier(run):
+    r = run._r
+    rPr = r.get_or_add_rPr()
+    rFonts = OxmlElement("w:rFonts")
+    rFonts.set(qn("w:ascii"), "Courier New")
+    rFonts.set(qn("w:hAnsi"), "Courier New")
+    rFonts.set(qn("w:cs"), "Courier New")
+    rPr.insert(0, rFonts)
+
 def set_font(run, size=11, bold=False, italic=False, code=False):
     run.font.name = "Courier New" if code else "Arial"
     run.font.size = Pt(size)
@@ -514,6 +523,7 @@ with open("assignment1.r", "r") as fh:
 code_para = doc.add_paragraph()
 code_run = code_para.add_run(rcode)
 code_run.font.name = "Courier New"
+force_courier(code_run)
 code_run.font.size = Pt(8)
 pf = code_para.paragraph_format
 pf.line_spacing_rule = WD_LINE_SPACING.MULTIPLE
