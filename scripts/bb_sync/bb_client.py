@@ -1,5 +1,5 @@
 import requests
-from config import BB_BASE_URL
+from .config import BB_BASE_URL
 
 FOLDER_TYPES = {
     "resource/x-bb-folder",

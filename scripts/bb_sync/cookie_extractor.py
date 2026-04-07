@@ -3,7 +3,7 @@ import subprocess
 import time
 from pathlib import Path
 from urllib.parse import urlparse
-from config import BB_BASE_URL, COOKIE_CACHE
+from .config import BB_BASE_URL, COOKIE_CACHE
 
 # This script runs on the WINDOWS Python side via powershell.exe
 # It extracts Edge cookies for the given domain using browser_cookie3
