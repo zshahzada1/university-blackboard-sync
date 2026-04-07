@@ -13,6 +13,15 @@ COURSE_OVERRIDES = {
 import re
 MODULE_CODE_RE = re.compile(r'\b([A-Z]{2,4}\d{3,4})\b')
 
+# Allowlist — only these module codes will be synced
+SYNC_MODULES = {"FA565", "FN585", "FA583", "FN581", "LW570", "MA583"}
+
+
+def should_sync_course(course_name: str) -> bool:
+    """Return True only if course_name contains a module code in SYNC_MODULES."""
+    m = MODULE_CODE_RE.search(course_name.upper())
+    return bool(m and m.group(1) in SYNC_MODULES)
+
 
 def local_path_for_course(course_name: str) -> str:
     """Return the local folder name for a given Blackboard course name."""
