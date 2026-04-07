@@ -6,7 +6,7 @@ from bb_client import BlackboardClient
 
 def _safe_name(name: str) -> str:
     """Sanitise a Blackboard title for use as a folder/file name."""
-    return re.sub(r'[<>:"/\\|?*]', '_', name).strip()
+    return re.sub(r'[<>:"/\\|?*]', '_', name).strip().rstrip('.')
 
 
 class Syncer:
@@ -37,18 +37,23 @@ class Syncer:
 
     def _download_attachment(self, course_id: str, content_id: str,
                               attachment: dict, dest_dir: str):
-        filename = attachment.get("fileName", attachment["id"])
+        filename = _safe_name(attachment.get("fileName", attachment["id"]))
         dest_path = Path(dest_dir) / filename
         if dest_path.exists():
             print(f"    [skip] {filename}")
             return
         url = self._client.download_url(course_id, content_id, attachment["id"])
         print(f"    [download] {filename}")
-        with requests.Session() as s:
-            s.cookies.update(self._client._cookies)
-            with s.get(url, stream=True, allow_redirects=True, timeout=60) as resp:
-                resp.raise_for_status()
-                dest_path.parent.mkdir(parents=True, exist_ok=True)
-                with open(dest_path, "wb") as f:
-                    for chunk in resp.iter_content(chunk_size=8192):
-                        f.write(chunk)
+        tmp_path = dest_path.with_suffix(dest_path.suffix + ".tmp")
+        try:
+            with requests.Session() as s:
+                s.cookies.update(self._client._cookies)
+                with s.get(url, stream=True, allow_redirects=True, timeout=60) as resp:
+                    resp.raise_for_status()
+                    with open(tmp_path, "wb") as f:
+                        for chunk in resp.iter_content(chunk_size=8192):
+                            f.write(chunk)
+            tmp_path.rename(dest_path)
+        except Exception:
+            tmp_path.unlink(missing_ok=True)
+            raise
