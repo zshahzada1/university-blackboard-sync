@@ -26,14 +26,18 @@ def extract_bb_cookies(force_refresh: bool = False) -> dict:
     if not force_refresh and cache.exists():
         age = time.time() - cache.stat().st_mtime
         if age < 3600:
-            return json.loads(cache.read_text())
+            try:
+                return json.loads(cache.read_text())
+            except (json.JSONDecodeError, OSError):
+                pass  # fall through to re-extraction
 
     domain = urlparse(BB_BASE_URL).netloc  # studentcentral.brighton.ac.uk
 
     result = subprocess.run(
-        ["powershell.exe", "-Command", f'python -c "{_WINDOWS_SCRIPT}" {domain}'],
+        ["powershell.exe", "-Command", f"python -c '{_WINDOWS_SCRIPT}' {domain}"],
         capture_output=True,
         text=True,
+        timeout=30,
     )
 
     if result.returncode != 0:
