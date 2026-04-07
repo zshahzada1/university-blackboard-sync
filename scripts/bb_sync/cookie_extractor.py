@@ -33,10 +33,21 @@ def extract_bb_cookies(force_refresh: bool = False) -> dict:
 
     domain = urlparse(BB_BASE_URL).netloc  # studentcentral.brighton.ac.uk
 
+    # Locate powershell.exe — bare name works when Windows paths are in WSL $PATH,
+    # full path works when they aren't (e.g. restricted/sandboxed sessions).
+    _PS_CANDIDATES = [
+        "powershell.exe",
+        "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
+    ]
+    powershell = next(
+        (p for p in _PS_CANDIDATES if Path(p).exists() or p == "powershell.exe"),
+        "powershell.exe",
+    )
+
     # Try 'python' first (most common), fall back to 'py -3' (Windows Python Launcher)
     ps_command = f"python -c '{_WINDOWS_SCRIPT}' {domain}"
     result = subprocess.run(
-        ["powershell.exe", "-Command", ps_command],
+        [powershell, "-Command", ps_command],
         capture_output=True,
         text=True,
         timeout=30,
@@ -44,7 +55,7 @@ def extract_bb_cookies(force_refresh: bool = False) -> dict:
     if result.returncode != 0:
         ps_command_py = f"py -3 -c '{_WINDOWS_SCRIPT}' {domain}"
         result = subprocess.run(
-            ["powershell.exe", "-Command", ps_command_py],
+            [powershell, "-Command", ps_command_py],
             capture_output=True,
             text=True,
             timeout=30,
