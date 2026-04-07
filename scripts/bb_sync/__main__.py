@@ -35,7 +35,10 @@ def main():
         print("Try: python -m bb_sync --refresh-cookies")
         sys.exit(1)
 
-    user_id = me["id"]
+    user_id = me.get("id")
+    if not user_id:
+        print("ERROR: Could not retrieve user ID from Blackboard response.")
+        sys.exit(1)
     print(f"Logged in as: {me.get('userName', user_id)}")
 
     print("Fetching enrolled courses…")
@@ -46,10 +49,20 @@ def main():
 
     print(f"Found {len(courses)} active course(s):")
     for c in courses:
-        folder_name = local_path_for_course(c["name"])
+        course_name = c.get("name", "")
+        if not course_name:
+            print(f"  [skip] Course {c.get('id', '?')} has no name, skipping")
+            continue
+        folder_name = local_path_for_course(course_name)
+        if not folder_name:
+            print(f"  [skip] Could not determine local folder for: {course_name!r}")
+            continue
         local_path = str(Path(LOCAL_ROOT) / folder_name)
-        print(f"  {c['name']} → {local_path}")
-        syncer.sync_course(c["id"], c["name"], local_path)
+        print(f"  {course_name} → {local_path}")
+        try:
+            syncer.sync_course(c["id"], course_name, local_path)
+        except Exception as e:
+            print(f"  [error] Failed to sync {course_name}: {e}")
 
     print("\nSync complete.")
 
