@@ -47,8 +47,15 @@ class BlackboardClient:
             path = f"/learn/api/public/v1/courses/{course_id}/contents/{parent_id}/children"
         else:
             path = f"/learn/api/public/v1/courses/{course_id}/contents"
-        data = self._get(path, params={"limit": 200})
-        return data.get("results", [])
+
+        params = {"limit": 200}
+        all_results = []
+        while path:
+            data = self._get(path, params=params)
+            all_results.extend(data.get("results", []))
+            path = (data.get("paging") or {}).get("nextPage")
+            params = {}  # nextPage URL already contains all query params
+        return all_results
 
     def get_attachments(self, course_id: str, content_id: str) -> list:
         try:

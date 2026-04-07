@@ -103,5 +103,36 @@ class TestBlackboardClient(unittest.TestCase):
         self.assertEqual(len(courses), 1)
         self.assertEqual(courses[0]["courseId"], "FA565")
 
+    def test_get_contents_follows_next_page(self):
+        """get_contents must return items from all pages, not just the first."""
+        client = self._make_client()
+
+        page1 = {
+            "results": [{"id": "_1_1", "title": "Week 1"}],
+            "paging": {"nextPage": "/learn/api/public/v1/courses/_c_1/contents?offset=1&limit=1"},
+        }
+        page2 = {
+            "results": [{"id": "_2_1", "title": "Week 2"}],
+        }
+
+        with patch.object(client, '_get', side_effect=[page1, page2]) as mock_get:
+            results = client.get_contents("_c_1")
+
+        self.assertEqual(len(results), 2)
+        self.assertEqual(results[0]["title"], "Week 1")
+        self.assertEqual(results[1]["title"], "Week 2")
+        second_call_path = mock_get.call_args_list[1][0][0]
+        self.assertIn("offset=1", second_call_path)
+
+    def test_get_contents_single_page_unchanged(self):
+        """get_contents with no paging key returns results normally."""
+        client = self._make_client()
+        single_page = {"results": [{"id": "_1_1", "title": "Week 1"}]}
+
+        with patch.object(client, '_get', return_value=single_page):
+            results = client.get_contents("_c_1")
+
+        self.assertEqual(results, [{"id": "_1_1", "title": "Week 1"}])
+
 if __name__ == '__main__':
     unittest.main()
