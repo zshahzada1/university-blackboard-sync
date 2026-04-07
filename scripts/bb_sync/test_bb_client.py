@@ -7,8 +7,10 @@ from bb_client import BlackboardClient
 
 MOCK_ME = {"id": "_123_1", "userName": "student1"}
 MOCK_COURSES = {"results": [
-    {"id": "_1_1", "courseId": "FN585", "name": "FN585 - Corporate Finance", "availability": {"available": "Yes"}},
-    {"id": "_2_1", "courseId": "FA565", "name": "FA565 - Financial Accounting", "availability": {"available": "Yes"}},
+    {"courseId": "FN585", "availability": {"available": "Yes"},
+     "course": {"id": "_1_1", "courseId": "FN585", "name": "FN585 - Corporate Finance"}},
+    {"courseId": "FA565", "availability": {"available": "Yes"},
+     "course": {"id": "_2_1", "courseId": "FA565", "name": "FA565 - Financial Accounting"}},
 ]}
 MOCK_CONTENTS = {"results": [
     {"id": "_10_1", "title": "Week 1 Slides", "contentHandler": {"id": "resource/x-bb-folder"}},
@@ -88,8 +90,10 @@ class TestBlackboardClient(unittest.TestCase):
     def test_get_courses_filters_null_availability(self):
         """Should not crash if availability key is explicitly null."""
         mock_data = {"results": [
-            {"id": "_1_1", "courseId": "FN585", "name": "FN585", "availability": None},
-            {"id": "_2_1", "courseId": "FA565", "name": "FA565", "availability": {"available": "Yes"}},
+            {"courseId": "FN585", "availability": None,
+             "course": {"id": "_1_1", "courseId": "FN585", "name": "FN585"}},
+            {"courseId": "FA565", "availability": {"available": "Yes"},
+             "course": {"id": "_2_1", "courseId": "FA565", "name": "FA565"}},
         ]}
         client = self._make_client()
         with patch('bb_client.requests.Session') as mock_session:
