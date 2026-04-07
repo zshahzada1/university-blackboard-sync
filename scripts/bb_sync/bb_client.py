@@ -4,6 +4,7 @@ from config import BB_BASE_URL
 FOLDER_TYPES = {
     "resource/x-bb-folder",
     "resource/x-bb-coursetoc",
+    "resource/x-bb-lesson",
 }
 
 class BlackboardClient:
@@ -29,7 +30,7 @@ class BlackboardClient:
         )
         return [
             c for c in data.get("results", [])
-            if c.get("availability", {}).get("available") == "Yes"
+            if (c.get("availability") or {}).get("available") == "Yes"
         ]
 
     def get_contents(self, course_id: str, parent_id: str = None) -> list:

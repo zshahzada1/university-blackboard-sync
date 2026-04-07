@@ -85,5 +85,23 @@ class TestBlackboardClient(unittest.TestCase):
         self.assertIn("_1_1", url)
         self.assertIn("_99_1", url)
 
+    def test_get_courses_filters_null_availability(self):
+        """Should not crash if availability key is explicitly null."""
+        mock_data = {"results": [
+            {"id": "_1_1", "courseId": "FN585", "name": "FN585", "availability": None},
+            {"id": "_2_1", "courseId": "FA565", "name": "FA565", "availability": {"available": "Yes"}},
+        ]}
+        client = self._make_client()
+        with patch('bb_client.requests.Session') as mock_session:
+            mock_resp = MagicMock()
+            mock_resp.json.return_value = mock_data
+            mock_resp.raise_for_status = MagicMock()
+            mock_session.return_value.__enter__ = MagicMock(return_value=mock_session.return_value)
+            mock_session.return_value.__exit__ = MagicMock(return_value=False)
+            mock_session.return_value.get.return_value = mock_resp
+            courses = client.get_courses("_123_1")
+        self.assertEqual(len(courses), 1)
+        self.assertEqual(courses[0]["courseId"], "FA565")
+
 if __name__ == '__main__':
     unittest.main()
