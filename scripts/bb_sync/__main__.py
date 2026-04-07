@@ -5,7 +5,7 @@ from pathlib import Path
 # Ensure the package directory is on sys.path when run as `python -m bb_sync`
 sys.path.insert(0, str(Path(__file__).parent))
 
-from config import BB_BASE_URL, LOCAL_ROOT, local_path_for_course
+from config import BB_BASE_URL, LOCAL_ROOT, local_path_for_course, should_sync_course
 from cookie_extractor import extract_bb_cookies
 from bb_client import BlackboardClient
 from syncer import Syncer
@@ -52,6 +52,9 @@ def main():
         course_name = c.get("name", "")
         if not course_name:
             print(f"  [skip] Course {c.get('id', '?')} has no name, skipping")
+            continue
+        if not should_sync_course(course_name):
+            print(f"  [skip] {course_name!r} not in module allowlist")
             continue
         folder_name = local_path_for_course(course_name)
         if not folder_name:
