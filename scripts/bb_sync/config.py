@@ -19,7 +19,7 @@ SYNC_MODULES = {"FA565", "FN585", "FA583", "FN581", "LW570", "MA583"}
 
 def should_sync_course(course_name: str) -> bool:
     """Return True only if course_name contains a module code in SYNC_MODULES."""
-    m = MODULE_CODE_RE.search(course_name.upper())
+    m = MODULE_CODE_RE.search(course_name)
     return bool(m and m.group(1) in SYNC_MODULES)
 
 

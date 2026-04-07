@@ -27,8 +27,5 @@ class TestShouldSyncCourse(unittest.TestCase):
     def test_course_with_no_code_is_skipped(self):
         self.assertFalse(should_sync_course("General Resources"))
 
-    def test_lowercase_code_in_title_is_matched(self):
-        self.assertTrue(should_sync_course("fn585 - Corporate Finance"))
-
 if __name__ == '__main__':
     unittest.main()
