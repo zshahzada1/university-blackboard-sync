@@ -26,12 +26,21 @@ class BlackboardClient:
     def get_courses(self, user_id: str) -> list:
         data = self._get(
             f"/learn/api/public/v1/users/{user_id}/courses",
-            params={"limit": 200, "fields": "id,courseId,name,availability"}
+            params={"limit": 200, "expand": "course"}
         )
-        return [
-            c for c in data.get("results", [])
-            if (c.get("availability") or {}).get("available") == "Yes"
-        ]
+        results = []
+        for enrollment in data.get("results", []):
+            avail = (enrollment.get("availability") or {}).get("available")
+            if avail != "Yes":
+                continue
+            # Course details are nested under "course" when expanded
+            course = enrollment.get("course", {})
+            results.append({
+                "id": course.get("id") or enrollment.get("courseId", ""),
+                "name": course.get("name", ""),
+                "courseId": course.get("courseId", ""),
+            })
+        return results
 
     def get_contents(self, course_id: str, parent_id: str = None) -> list:
         if parent_id:
@@ -42,10 +51,15 @@ class BlackboardClient:
         return data.get("results", [])
 
     def get_attachments(self, course_id: str, content_id: str) -> list:
-        data = self._get(
-            f"/learn/api/public/v1/courses/{course_id}/contents/{content_id}/attachments"
-        )
-        return data.get("results", [])
+        try:
+            data = self._get(
+                f"/learn/api/public/v1/courses/{course_id}/contents/{content_id}/attachments"
+            )
+            return data.get("results", [])
+        except requests.HTTPError as e:
+            if e.response.status_code in (400, 403, 404):
+                return []  # content item has no attachments (link, quiz, etc.)
+            raise
 
     def download_url(self, course_id: str, content_id: str, attachment_id: str) -> str:
         return (

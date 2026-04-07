@@ -1,11 +1,19 @@
 # scripts/bb_sync/test_main_filter.py
 import sys
+import importlib
 import unittest
-from pathlib import Path
-from unittest.mock import MagicMock, patch, ANY
-sys.path.insert(0, str(Path(__file__).parent))
+from unittest.mock import MagicMock, patch
+
+sys.path.insert(0, '.')
+
 
 class TestMainFilter(unittest.TestCase):
+    def setUp(self):
+        sys.modules.pop('bb_sync_main', None)
+
+    def tearDown(self):
+        sys.modules.pop('bb_sync_main', None)
+
     def test_unlisted_course_is_not_synced(self):
         """Courses outside SYNC_MODULES must not be passed to syncer.sync_course."""
         mock_client = MagicMock()
@@ -14,19 +22,21 @@ class TestMainFilter(unittest.TestCase):
             {"id": "_1_1", "name": "BY150 - Introduction to Business"},
             {"id": "_2_1", "name": "FN585 - Corporate Finance"},
         ]
-
         mock_syncer = MagicMock()
 
-        # Patch at the module level where they're imported
-        with patch('cookie_extractor.extract_bb_cookies', return_value={}), \
-             patch('bb_client.BlackboardClient', return_value=mock_client), \
-             patch('syncer.Syncer', return_value=mock_syncer):
-            # Load and execute __main__ module
-            import importlib.util
-            spec = importlib.util.spec_from_file_location("bb_sync_main", str(Path(__file__).parent / "__main__.py"))
-            main_mod = importlib.util.module_from_spec(spec)
-            sys.modules['bb_sync_main'] = main_mod
-            spec.loader.exec_module(main_mod)
+        # Load the module fresh so patches bind into its namespace
+        import importlib.util, pathlib
+        spec = importlib.util.spec_from_file_location(
+            'bb_sync_main',
+            pathlib.Path(__file__).parent / '__main__.py'
+        )
+        main_mod = importlib.util.module_from_spec(spec)
+        sys.modules['bb_sync_main'] = main_mod
+        spec.loader.exec_module(main_mod)
+
+        with patch('bb_sync_main.extract_bb_cookies', return_value={}), \
+             patch('bb_sync_main.BlackboardClient', return_value=mock_client), \
+             patch('bb_sync_main.Syncer', return_value=mock_syncer):
             main_mod.main()
 
         synced_names = [
@@ -34,6 +44,7 @@ class TestMainFilter(unittest.TestCase):
         ]
         self.assertNotIn("BY150 - Introduction to Business", synced_names)
         self.assertIn("FN585 - Corporate Finance", synced_names)
+
 
 if __name__ == '__main__':
     unittest.main()
