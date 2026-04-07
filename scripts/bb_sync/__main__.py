@@ -1,10 +1,14 @@
 # ~/University/scripts/bb_sync/__main__.py
 import sys
 from pathlib import Path
-from .config import BB_BASE_URL, LOCAL_ROOT, local_path_for_course
-from .cookie_extractor import extract_bb_cookies
-from .bb_client import BlackboardClient
-from .syncer import Syncer
+
+# Ensure the package directory is on sys.path when run as `python -m bb_sync`
+sys.path.insert(0, str(Path(__file__).parent))
+
+from config import BB_BASE_URL, LOCAL_ROOT, local_path_for_course
+from cookie_extractor import extract_bb_cookies
+from bb_client import BlackboardClient
+from syncer import Syncer
 
 
 def main():

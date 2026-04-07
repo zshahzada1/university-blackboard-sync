@@ -1,7 +1,7 @@
 import re
 import requests
 from pathlib import Path
-from .bb_client import BlackboardClient
+from bb_client import BlackboardClient
 
 
 def _safe_name(name: str) -> str:
