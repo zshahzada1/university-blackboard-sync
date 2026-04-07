@@ -27,7 +27,7 @@ class TestCookieExtractor(unittest.TestCase):
                 stderr="ModuleNotFoundError: No module named 'browser_cookie3'"
             )
             with self.assertRaises(RuntimeError):
-                extract_bb_cookies()
+                extract_bb_cookies(force_refresh=True)
 
 if __name__ == '__main__':
     unittest.main()
