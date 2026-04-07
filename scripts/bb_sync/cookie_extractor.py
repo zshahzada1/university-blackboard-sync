@@ -16,6 +16,10 @@ _WINDOWS_SCRIPT_LINES = [
 _WINDOWS_SCRIPT = "; ".join(_WINDOWS_SCRIPT_LINES)
 
 
+_WINDOWS_MANUAL_EXPORT = "C:\\cookies_bb.json"
+_WINDOWS_MANUAL_EXPORT_WSL = "/mnt/c/cookies_bb.json"
+
+
 def extract_bb_cookies(force_refresh: bool = False) -> dict:
     """
     Extract Edge session cookies for BB_BASE_URL using Windows Python.
@@ -30,6 +34,20 @@ def extract_bb_cookies(force_refresh: bool = False) -> dict:
                 return json.loads(cache.read_text())
             except (json.JSONDecodeError, OSError):
                 pass  # fall through to re-extraction
+
+    # Check for manually exported cookie file (Cookie-Editor JSON export)
+    manual = Path(_WINDOWS_MANUAL_EXPORT_WSL)
+    if manual.exists():
+        print(f"    [cookie-editor] Reading from {_WINDOWS_MANUAL_EXPORT_WSL}")
+        raw = json.loads(manual.read_text())
+        # Cookie-Editor exports a list of objects with "name"/"value" keys
+        if isinstance(raw, list):
+            cookies = {c["name"]: c["value"] for c in raw if "name" in c and "value" in c}
+        else:
+            cookies = raw
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps(cookies))
+        return cookies
 
     domain = urlparse(BB_BASE_URL).netloc  # studentcentral.brighton.ac.uk
 
