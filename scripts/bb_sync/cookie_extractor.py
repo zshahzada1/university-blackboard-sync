@@ -33,12 +33,22 @@ def extract_bb_cookies(force_refresh: bool = False) -> dict:
 
     domain = urlparse(BB_BASE_URL).netloc  # studentcentral.brighton.ac.uk
 
+    # Try 'python' first (most common), fall back to 'py -3' (Windows Python Launcher)
+    ps_command = f"python -c '{_WINDOWS_SCRIPT}' {domain}"
     result = subprocess.run(
-        ["powershell.exe", "-Command", f"python -c '{_WINDOWS_SCRIPT}' {domain}"],
+        ["powershell.exe", "-Command", ps_command],
         capture_output=True,
         text=True,
         timeout=30,
     )
+    if result.returncode != 0:
+        ps_command_py = f"py -3 -c '{_WINDOWS_SCRIPT}' {domain}"
+        result = subprocess.run(
+            ["powershell.exe", "-Command", ps_command_py],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
 
     if result.returncode != 0:
         raise RuntimeError(
