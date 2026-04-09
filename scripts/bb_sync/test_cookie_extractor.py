@@ -153,7 +153,7 @@ class TestExtractViaCdp(unittest.TestCase):
             with self.assertRaises(RuntimeError) as ctx:
                 _extract_via_cdp("studentcentral.brighton.ac.uk")
 
-        self.assertIn("10 seconds", str(ctx.exception))
+        self.assertIn("15 seconds", str(ctx.exception))
         self.assertTrue(any("7777" in c for c in kill_calls), "Edge PID not killed on timeout")
 
 

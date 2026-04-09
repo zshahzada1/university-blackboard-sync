@@ -66,8 +66,8 @@ def _extract_via_cdp(domain: str) -> dict:
 
     Flow:
     1. Prompt for sudo password (security gate).
-    2. Launch Edge headlessly with the user's real profile + remote debug port 9222.
-    3. Poll localhost:9222 until CDP is ready (up to 10 s).
+    2. Launch Edge hidden (non-headless) with the user's real profile + remote debug port 9222.
+    3. Poll localhost:9222 (and Windows gateway IP as fallback) until CDP is ready (up to 15 s).
     4. Send Network.getAllCookies via WebSocket, filter to `domain`.
     5. Kill Edge, return {name: value} dict.
 
@@ -82,13 +82,14 @@ def _extract_via_cdp(domain: str) -> dict:
 
     powershell = _find_powershell()
 
+    # Launch Edge hidden (not headless — headless mode can suppress the debug port).
+    # -WindowStyle Hidden keeps it off the taskbar while still being a full browser process.
     launch_cmd = (
         '$d = "$env:LOCALAPPDATA\\Microsoft\\Edge\\User Data"; '
         '$p = Start-Process -FilePath msedge.exe '
-        '-ArgumentList '
-        '"--headless=new","--remote-debugging-port=9222",'
-        '"--user-data-dir=$d","--no-first-run","--no-default-browser-check" '
-        '-PassThru; Write-Output $p.Id'
+        '-ArgumentList "--remote-debugging-port=9222","--user-data-dir=$d",'
+        '"--no-first-run","--no-default-browser-check" '
+        '-WindowStyle Hidden -PassThru; Write-Output $p.Id'
     )
     launch_result = subprocess.run(
         [powershell, "-Command", launch_cmd],
@@ -103,19 +104,36 @@ def _extract_via_cdp(domain: str) -> dict:
 
     edge_pid = launch_result.stdout.strip()
 
+    # WSL2 localhost forwarding usually works, but fall back to the Windows gateway IP
+    # (visible as the nameserver in /etc/resolv.conf) if localhost doesn't respond.
+    cdp_hosts = ["localhost"]
     try:
-        cdp_base = "http://localhost:9222"
-        for _ in range(20):
-            try:
-                resp = requests.get(f"{cdp_base}/json/version", timeout=1)
-                if resp.status_code == 200:
-                    break
-            except requests.RequestException:
-                pass
+        gw = subprocess.run(
+            ["bash", "-c", "awk '/^nameserver/{print $2; exit}' /etc/resolv.conf"],
+            capture_output=True, text=True, timeout=3,
+        ).stdout.strip()
+        if gw and gw != "localhost":
+            cdp_hosts.append(gw)
+    except Exception:
+        pass
+
+    try:
+        cdp_base = None
+        for _ in range(30):  # up to 15 seconds
+            for host in cdp_hosts:
+                try:
+                    resp = requests.get(f"http://{host}:9222/json/version", timeout=1)
+                    if resp.status_code == 200:
+                        cdp_base = f"http://{host}:9222"
+                        break
+                except requests.RequestException:
+                    pass
+            if cdp_base:
+                break
             time.sleep(0.5)
-        else:
+        if cdp_base is None:
             raise RuntimeError(
-                "Edge CDP port did not become available within 10 seconds. "
+                "Edge CDP port did not become available within 15 seconds. "
                 "Try closing any open Edge windows first."
             )
 
