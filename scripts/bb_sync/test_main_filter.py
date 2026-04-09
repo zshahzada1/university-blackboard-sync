@@ -55,6 +55,50 @@ class TestMainFilter(unittest.TestCase):
         spec.loader.exec_module(main_mod)
         return main_mod
 
+    def test_modules_flag_syncs_only_selected(self):
+        """--modules FA565 syncs only FA565 even when FN585 is available."""
+        mock_client = MagicMock()
+        mock_client.get_current_user.return_value = {"id": "u1", "userName": "testuser"}
+        mock_client.get_courses.return_value = [
+            {"id": "_1_1", "name": "FA565 - Financial Reporting"},
+            {"id": "_2_1", "name": "FN585 - Corporate Finance"},
+        ]
+        mock_syncer = MagicMock()
+        main_mod = self._load_main_module()
+
+        with patch('bb_sync_main.extract_bb_cookies', return_value={}), \
+             patch('bb_sync_main.BlackboardClient', return_value=mock_client), \
+             patch('bb_sync_main.Syncer', return_value=mock_syncer), \
+             patch('sys.argv', ['bb_sync', '--modules', 'FA565']):
+            main_mod.main()
+
+        synced = [call.args[1] for call in mock_syncer.sync_course.call_args_list]
+        self.assertIn("FA565 - Financial Reporting", synced)
+        self.assertNotIn("FN585 - Corporate Finance", synced)
+
+    def test_modules_flag_accepts_multiple_codes(self):
+        """--modules FA565 FN585 syncs both specified modules but not BY150."""
+        mock_client = MagicMock()
+        mock_client.get_current_user.return_value = {"id": "u1", "userName": "testuser"}
+        mock_client.get_courses.return_value = [
+            {"id": "_1_1", "name": "FA565 - Financial Reporting"},
+            {"id": "_2_1", "name": "FN585 - Corporate Finance"},
+            {"id": "_3_1", "name": "BY150 - Introduction to Business"},
+        ]
+        mock_syncer = MagicMock()
+        main_mod = self._load_main_module()
+
+        with patch('bb_sync_main.extract_bb_cookies', return_value={}), \
+             patch('bb_sync_main.BlackboardClient', return_value=mock_client), \
+             patch('bb_sync_main.Syncer', return_value=mock_syncer), \
+             patch('sys.argv', ['bb_sync', '--modules', 'FA565', 'FN585']):
+            main_mod.main()
+
+        synced = [call.args[1] for call in mock_syncer.sync_course.call_args_list]
+        self.assertIn("FA565 - Financial Reporting", synced)
+        self.assertIn("FN585 - Corporate Finance", synced)
+        self.assertNotIn("BY150 - Introduction to Business", synced)
+
     def test_list_courses_outputs_all_as_json(self):
         """--list-courses prints JSON of ALL courses (not filtered) to stdout and exits 0."""
         mock_client = MagicMock()
