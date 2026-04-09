@@ -14,7 +14,7 @@ import re
 MODULE_CODE_RE = re.compile(r'\b([A-Z]{2,4}\d{3,4})\b')
 
 # Allowlist — only these module codes will be synced
-SYNC_MODULES = {"FA565", "FN585", "FA583", "FN581", "LW570", "MA583"}
+SYNC_MODULES = {"FA565", "FN585", "FA583"}
 
 
 def should_sync_course(course_name: str) -> bool:
