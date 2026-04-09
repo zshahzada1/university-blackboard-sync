@@ -56,9 +56,10 @@ class TestExtractViaCdp(unittest.TestCase):
         def side_effect(cmd, **kwargs):
             cmd_str = " ".join(str(c) for c in cmd)
             if "sudo" in cmd_str:
-                return MagicMock(returncode=0)
-            if "powershell" in cmd_str.lower() or "Stop-Process" in cmd_str:
+                return MagicMock(returncode=0, stdout="", stderr="")
+            if "Start-Process" in cmd_str:
                 return MagicMock(returncode=0, stdout=f"{edge_pid}\n", stderr="")
+            # Stop-Process and other powershell calls return empty stdout
             return MagicMock(returncode=0, stdout="", stderr="")
         return side_effect
 
@@ -76,10 +77,10 @@ class TestExtractViaCdp(unittest.TestCase):
         mock_ws = MagicMock()
         mock_ws.recv.return_value = all_cookies_payload
 
+        from cookie_extractor import _extract_via_cdp
         with patch("cookie_extractor.subprocess.run", side_effect=self._make_mock_run()), \
              patch("cookie_extractor.requests.get", side_effect=self._make_mock_get()), \
              patch("cookie_extractor.websocket.WebSocket", return_value=mock_ws):
-            from cookie_extractor import _extract_via_cdp
             result = _extract_via_cdp("studentcentral.brighton.ac.uk")
 
         self.assertEqual(result["BbRouter"], "tok123")
@@ -87,14 +88,15 @@ class TestExtractViaCdp(unittest.TestCase):
         self.assertNotIn("unrelated", result)
 
     def test_cdp_sudo_failure_raises(self):
-        """_extract_via_cdp raises RuntimeError when sudo auth fails."""
+        """_extract_via_cdp raises RuntimeError when sudo -v auth fails."""
         def sudo_fails(cmd, **kwargs):
-            if "sudo" in " ".join(str(c) for c in cmd):
+            cmd_str = " ".join(str(c) for c in cmd)
+            if "sudo" in cmd_str and "-v" in cmd_str:
                 return MagicMock(returncode=1)
             return MagicMock(returncode=0)
 
+        from cookie_extractor import _extract_via_cdp
         with patch("cookie_extractor.subprocess.run", side_effect=sudo_fails):
-            from cookie_extractor import _extract_via_cdp
             with self.assertRaises(RuntimeError) as ctx:
                 _extract_via_cdp("studentcentral.brighton.ac.uk")
         self.assertIn("sudo", str(ctx.exception).lower())
@@ -114,14 +116,38 @@ class TestExtractViaCdp(unittest.TestCase):
                 return MagicMock(returncode=0, stdout="8888\n", stderr="")
             return MagicMock(returncode=0, stdout="", stderr="")
 
+        from cookie_extractor import _extract_via_cdp
         with patch("cookie_extractor.subprocess.run", side_effect=run_side_effect), \
              patch("cookie_extractor.requests.get", side_effect=self._make_mock_get()), \
              patch("cookie_extractor.websocket.WebSocket", return_value=mock_ws):
-            from cookie_extractor import _extract_via_cdp
             with self.assertRaises(Exception):
                 _extract_via_cdp("studentcentral.brighton.ac.uk")
 
         self.assertTrue(any("8888" in c for c in kill_calls), "Edge PID not killed on error")
+
+    def test_cdp_kills_edge_on_poll_timeout(self):
+        """_extract_via_cdp kills Edge and raises when CDP port never opens."""
+        kill_calls = []
+
+        def run_side_effect(cmd, **kwargs):
+            cmd_str = " ".join(str(c) for c in cmd)
+            if "Stop-Process" in cmd_str:
+                kill_calls.append(cmd_str)
+            if "Start-Process" in cmd_str:
+                return MagicMock(returncode=0, stdout="7777\n", stderr="")
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        import requests as req_module
+
+        from cookie_extractor import _extract_via_cdp
+        with patch("cookie_extractor.subprocess.run", side_effect=run_side_effect), \
+             patch("cookie_extractor.requests.get", side_effect=req_module.RequestException("refused")), \
+             patch("cookie_extractor.time.sleep"):  # skip actual sleeping
+            with self.assertRaises(RuntimeError) as ctx:
+                _extract_via_cdp("studentcentral.brighton.ac.uk")
+
+        self.assertIn("10 seconds", str(ctx.exception))
+        self.assertTrue(any("7777" in c for c in kill_calls), "Edge PID not killed on timeout")
 
 
 if __name__ == '__main__':

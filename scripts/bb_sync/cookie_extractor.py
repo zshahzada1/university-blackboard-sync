@@ -38,7 +38,12 @@ def _find_powershell() -> str:
 
 
 def _require_sudo_auth() -> None:
-    """Prompt for WSL sudo password as a security gate before cookie extraction."""
+    """Require sudo authentication before cookie extraction.
+
+    Invalidates any cached sudo timestamp (sudo -k) then validates credentials
+    (sudo -v), which prompts for a password unless NOPASSWD is configured.
+    Raises RuntimeError if sudo -v fails.
+    """
     subprocess.run(["sudo", "-k"])  # invalidate cached sudo timestamp (ignore errors)
     result = subprocess.run(["sudo", "-v"])  # always prompts for password
     if result.returncode != 0:
@@ -116,19 +121,27 @@ def _extract_via_cdp(domain: str) -> dict:
 
         targets = requests.get(f"{cdp_base}/json", timeout=5).json()
         page_targets = [t for t in targets if t.get("type") == "page"]
-        if page_targets:
-            ws_url = page_targets[0]["webSocketDebuggerUrl"]
-        else:
-            new_tab = requests.get(f"{cdp_base}/json/new", timeout=5).json()
-            ws_url = new_tab["webSocketDebuggerUrl"]
+        try:
+            if page_targets:
+                ws_url = page_targets[0]["webSocketDebuggerUrl"]
+            else:
+                new_tab = requests.get(f"{cdp_base}/json/new", timeout=5).json()
+                ws_url = new_tab["webSocketDebuggerUrl"]
+        except (KeyError, IndexError) as e:
+            raise RuntimeError(f"Unexpected CDP target response: {e}") from e
 
         ws = websocket.WebSocket()
-        ws.connect(ws_url)
+        ws.connect(ws_url, timeout=10)
+        ws.settimeout(10)
         ws.send(json.dumps({"id": 1, "method": "Network.getAllCookies"}))
-        result = json.loads(ws.recv())
-        ws.close()
+        try:
+            result = json.loads(ws.recv())
+            all_cookies = result["result"]["cookies"]
+        except (KeyError, json.JSONDecodeError) as e:
+            raise RuntimeError(f"Unexpected CDP getAllCookies response: {e}") from e
+        finally:
+            ws.close()
 
-        all_cookies = result["result"]["cookies"]
         return {
             c["name"]: c["value"]
             for c in all_cookies
