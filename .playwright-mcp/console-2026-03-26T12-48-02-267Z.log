@@ -1,0 +1,3 @@
+[     593ms] TypeError: Cannot set properties of null (setting 'className')
+    at https://books.google.co.uk/books?id=o4ufDwAAQBAJ&pg=PT7&vq=profitability+ratios&output=html_text&source=gbs_search_r&cad=1:741:11345
+    at https://books.google.co.uk/books?id=o4ufDwAAQBAJ&pg=PT7&vq=profitability+ratios&output=html_text&source=gbs_search_r&cad=1:741:11486
