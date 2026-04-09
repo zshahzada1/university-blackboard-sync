@@ -154,9 +154,10 @@ def _extract_via_cdp(domain: str) -> dict:
 
 def extract_bb_cookies(force_refresh: bool = False) -> dict:
     """
-    Extract Edge session cookies for BB_BASE_URL using Windows Python.
+    Extract Edge session cookies for BB_BASE_URL.
+    Tries methods in order: CDP (primary) → manual Cookie-Editor export → browser_cookie3.
     Caches result to COOKIE_CACHE for 1 hour. Returns dict of {name: value}.
-    Raises RuntimeError if extraction fails.
+    Raises RuntimeError if all methods fail.
     """
     cache = Path(COOKIE_CACHE)
     if not force_refresh and cache.exists():
@@ -167,12 +168,24 @@ def extract_bb_cookies(force_refresh: bool = False) -> dict:
             except (json.JSONDecodeError, OSError):
                 pass  # fall through to re-extraction
 
-    # Check for manually exported cookie file (Cookie-Editor JSON export)
+    domain = urlparse(BB_BASE_URL).netloc  # studentcentral.brighton.ac.uk
+
+    # --- Method 1: Chrome DevTools Protocol (bypasses App-Bound Encryption) ---
+    try:
+        print("    [cdp] Extracting cookies via Chrome DevTools Protocol…")
+        cookies = _extract_via_cdp(domain)
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps(cookies))
+        return cookies
+    except RuntimeError as e:
+        print(f"    [cdp] CDP failed: {e}")
+        print("    [cdp] Falling back to alternative methods…")
+
+    # --- Method 2: Manually exported Cookie-Editor JSON ---
     manual = Path(_WINDOWS_MANUAL_EXPORT_WSL)
     if manual.exists():
         print(f"    [cookie-editor] Reading from {_WINDOWS_MANUAL_EXPORT_WSL}")
         raw = json.loads(manual.read_text())
-        # Cookie-Editor exports a list of objects with "name"/"value" keys
         if isinstance(raw, list):
             cookies = {c["name"]: c["value"] for c in raw if "name" in c and "value" in c}
         else:
@@ -181,41 +194,26 @@ def extract_bb_cookies(force_refresh: bool = False) -> dict:
         cache.write_text(json.dumps(cookies))
         return cookies
 
-    domain = urlparse(BB_BASE_URL).netloc  # studentcentral.brighton.ac.uk
-
-    # Locate powershell.exe — bare name works when Windows paths are in WSL $PATH,
-    # full path works when they aren't (e.g. restricted/sandboxed sessions).
-    _PS_CANDIDATES = [
-        "powershell.exe",
-        "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
-    ]
-    powershell = next(
-        (p for p in _PS_CANDIDATES if Path(p).exists() or p == "powershell.exe"),
-        "powershell.exe",
-    )
-
-    # Try 'python' first (most common), fall back to 'py -3' (Windows Python Launcher)
+    # --- Method 3: browser_cookie3 via Windows Python (legacy, broken on Edge 127+) ---
+    powershell = _find_powershell()
     ps_command = f"python -c '{_WINDOWS_SCRIPT}' {domain}"
     result = subprocess.run(
         [powershell, "-Command", ps_command],
-        capture_output=True,
-        text=True,
-        timeout=30,
+        capture_output=True, text=True, timeout=30,
     )
     if result.returncode != 0:
         ps_command_py = f"py -3 -c '{_WINDOWS_SCRIPT}' {domain}"
         result = subprocess.run(
             [powershell, "-Command", ps_command_py],
-            capture_output=True,
-            text=True,
-            timeout=30,
+            capture_output=True, text=True, timeout=30,
         )
 
     if result.returncode != 0:
         raise RuntimeError(
-            f"Cookie extraction failed. Is browser-cookie3 installed in Windows Python?\n"
-            f"Run in Windows PowerShell: pip install browser-cookie3\n"
-            f"Error: {result.stderr.strip()}"
+            f"Cookie extraction failed. All methods exhausted.\n"
+            f"CDP failed (see above). browser_cookie3 error: {result.stderr.strip()}\n"
+            f"Workaround: export cookies manually with Cookie-Editor and save to "
+            f"{_WINDOWS_MANUAL_EXPORT}"
         )
 
     cookies = json.loads(result.stdout.strip())

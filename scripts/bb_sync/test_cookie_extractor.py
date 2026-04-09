@@ -6,25 +6,31 @@ sys.path.insert(0, '.')
 from cookie_extractor import extract_bb_cookies
 
 class TestCookieExtractor(unittest.TestCase):
-    def test_returns_dict_of_cookies(self):
-        fake_cookies = json.dumps({"BbRouter": "abc123", "JSESSIONID": "xyz"})
-        with patch('cookie_extractor.subprocess.run') as mock_run:
-            mock_run.return_value = MagicMock(
-                returncode=0,
-                stdout=fake_cookies,
-                stderr=""
-            )
-            result = extract_bb_cookies()
+    def test_returns_dict_via_cdp_when_available(self):
+        """extract_bb_cookies returns cookies from CDP when it succeeds."""
+        cdp_cookies = {"BbRouter": "abc123", "JSESSIONID": "xyz"}
+        with patch("cookie_extractor._extract_via_cdp", return_value=cdp_cookies):
+            result = extract_bb_cookies(force_refresh=True)
         self.assertIsInstance(result, dict)
         self.assertIn("BbRouter", result)
         self.assertEqual(result["BbRouter"], "abc123")
 
-    def test_raises_on_subprocess_failure(self):
-        with patch('cookie_extractor.subprocess.run') as mock_run:
+    def test_falls_back_to_browser_cookie3_when_cdp_fails(self):
+        """extract_bb_cookies falls back to browser_cookie3 when CDP raises."""
+        fake_cookies = json.dumps({"BbRouter": "abc123", "JSESSIONID": "xyz"})
+        with patch("cookie_extractor._extract_via_cdp", side_effect=RuntimeError("CDP unavailable")), \
+             patch("cookie_extractor.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout=fake_cookies, stderr="")
+            result = extract_bb_cookies(force_refresh=True)
+        self.assertIsInstance(result, dict)
+        self.assertIn("BbRouter", result)
+
+    def test_raises_when_all_methods_fail(self):
+        """extract_bb_cookies raises RuntimeError when CDP and browser_cookie3 both fail."""
+        with patch("cookie_extractor._extract_via_cdp", side_effect=RuntimeError("CDP unavailable")), \
+             patch("cookie_extractor.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(
-                returncode=1,
-                stdout="",
-                stderr="ModuleNotFoundError: No module named 'browser_cookie3'"
+                returncode=1, stdout="", stderr="ModuleNotFoundError: No module named 'browser_cookie3'"
             )
             with self.assertRaises(RuntimeError):
                 extract_bb_cookies(force_refresh=True)
