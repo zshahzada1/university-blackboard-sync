@@ -28,15 +28,7 @@ class TestMainFilter(unittest.TestCase):
         ]
         mock_syncer = MagicMock()
 
-        # Load the module fresh so patches bind into its namespace
-        import importlib.util, pathlib
-        spec = importlib.util.spec_from_file_location(
-            'bb_sync_main',
-            pathlib.Path(__file__).parent / '__main__.py'
-        )
-        main_mod = importlib.util.module_from_spec(spec)
-        sys.modules['bb_sync_main'] = main_mod
-        spec.loader.exec_module(main_mod)
+        main_mod = self._load_main_module()
 
         with patch('bb_sync_main.extract_bb_cookies', return_value={}), \
              patch('bb_sync_main.BlackboardClient', return_value=mock_client), \

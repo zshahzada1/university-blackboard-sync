@@ -58,7 +58,7 @@ def main():
     if not courses:
         print("No active courses found.", file=out)
         if args.list_courses:
-            print("[]")
+            print(json.dumps([]))
         sys.exit(0)
 
     if args.list_courses:
