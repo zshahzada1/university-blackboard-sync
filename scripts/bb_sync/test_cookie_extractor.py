@@ -37,70 +37,43 @@ class TestCookieExtractor(unittest.TestCase):
                 extract_bb_cookies(force_refresh=True)
 
 class TestExtractViaCdp(unittest.TestCase):
-    """Tests for the CDP-based cookie extraction path."""
+    """Tests for the CDP-based cookie extraction path.
 
-    def _make_mock_get(self):
-        """Return a side_effect function for requests.get that handles CDP URLs."""
-        def side_effect(url, **kwargs):
-            if "version" in url:
-                m = MagicMock()
-                m.status_code = 200
-                return m
-            if url.endswith("/json"):
-                m = MagicMock()
-                m.json.return_value = [
-                    {
-                        "type": "page",
-                        "webSocketDebuggerUrl": "ws://localhost:9222/devtools/page/1",
-                    }
-                ]
-                return m
-            raise ValueError(f"Unexpected URL in mock: {url}")
-        return side_effect
+    The new implementation runs the CDP client on Windows Python via PowerShell
+    (Edge binds 9222 to 127.0.0.1 which is not reachable from WSL2). Tests mock
+    subprocess.run and pathlib.Path.write_text — no WSL-side websocket/requests needed.
+    """
 
-    def _make_mock_run(self, edge_pid="9999"):
-        """Return a side_effect function for subprocess.run that handles all expected calls."""
+    def _make_mock_run(self, ps_output=None, ps_returncode=0):
+        """sudo calls succeed; any PowerShell call returns ps_output / ps_returncode."""
         def side_effect(cmd, **kwargs):
             cmd_str = " ".join(str(c) for c in cmd)
             if "sudo" in cmd_str:
                 return MagicMock(returncode=0, stdout="", stderr="")
-            if "Start-Process" in cmd_str:
-                return MagicMock(returncode=0, stdout=f"{edge_pid}\n", stderr="")
-            # Stop-Process and other powershell calls return empty stdout
-            return MagicMock(returncode=0, stdout="", stderr="")
+            return MagicMock(returncode=ps_returncode,
+                             stdout=ps_output or "", stderr="")
         return side_effect
 
-    def test_cdp_returns_bb_cookies_only(self):
-        """_extract_via_cdp returns cookies filtered to the BB domain."""
-        all_cookies_payload = json.dumps({
-            "result": {
-                "cookies": [
-                    {"name": "BbRouter", "value": "tok123", "domain": "studentcentral.brighton.ac.uk"},
-                    {"name": "JSESSIONID", "value": "sid456", "domain": "studentcentral.brighton.ac.uk"},
-                    {"name": "unrelated", "value": "xyz", "domain": "google.com"},
-                ]
-            }
-        })
-        mock_ws = MagicMock()
-        mock_ws.recv.return_value = all_cookies_payload
+    def test_cdp_returns_cookies_from_powershell_output(self):
+        """_extract_via_cdp parses JSON from the Windows Python CDP script output."""
+        cdp_output = json.dumps({"BbRouter": "tok123", "JSESSIONID": "sid456"})
 
         from cookie_extractor import _extract_via_cdp
-        with patch("cookie_extractor.subprocess.run", side_effect=self._make_mock_run()), \
-             patch("cookie_extractor.requests.get", side_effect=self._make_mock_get()), \
-             patch("cookie_extractor.websocket.WebSocket", return_value=mock_ws):
+        with patch("cookie_extractor.subprocess.run",
+                   side_effect=self._make_mock_run(ps_output=cdp_output)), \
+             patch("pathlib.Path.write_text"):
             result = _extract_via_cdp("studentcentral.brighton.ac.uk")
 
         self.assertEqual(result["BbRouter"], "tok123")
         self.assertEqual(result["JSESSIONID"], "sid456")
-        self.assertNotIn("unrelated", result)
 
     def test_cdp_sudo_failure_raises(self):
         """_extract_via_cdp raises RuntimeError when sudo -v auth fails."""
         def sudo_fails(cmd, **kwargs):
             cmd_str = " ".join(str(c) for c in cmd)
             if "sudo" in cmd_str and "-v" in cmd_str:
-                return MagicMock(returncode=1)
-            return MagicMock(returncode=0)
+                return MagicMock(returncode=1, stdout="", stderr="")
+            return MagicMock(returncode=0, stdout="", stderr="")
 
         from cookie_extractor import _extract_via_cdp
         with patch("cookie_extractor.subprocess.run", side_effect=sudo_fails):
@@ -108,53 +81,25 @@ class TestExtractViaCdp(unittest.TestCase):
                 _extract_via_cdp("studentcentral.brighton.ac.uk")
         self.assertIn("sudo", str(ctx.exception).lower())
 
-    def test_cdp_kills_edge_on_ws_error(self):
-        """_extract_via_cdp kills Edge even when WebSocket raises."""
-        mock_ws = MagicMock()
-        mock_ws.connect.side_effect = OSError("connection refused")
-
-        kill_calls = []
-
-        def run_side_effect(cmd, **kwargs):
-            cmd_str = " ".join(str(c) for c in cmd)
-            if "Stop-Process" in cmd_str:
-                kill_calls.append(cmd_str)
-            if "Start-Process" in cmd_str:
-                return MagicMock(returncode=0, stdout="8888\n", stderr="")
-            return MagicMock(returncode=0, stdout="", stderr="")
-
+    def test_cdp_raises_on_powershell_failure(self):
+        """_extract_via_cdp raises RuntimeError when the PowerShell command exits non-zero."""
         from cookie_extractor import _extract_via_cdp
-        with patch("cookie_extractor.subprocess.run", side_effect=run_side_effect), \
-             patch("cookie_extractor.requests.get", side_effect=self._make_mock_get()), \
-             patch("cookie_extractor.websocket.WebSocket", return_value=mock_ws):
-            with self.assertRaises(Exception):
-                _extract_via_cdp("studentcentral.brighton.ac.uk")
-
-        self.assertTrue(any("8888" in c for c in kill_calls), "Edge PID not killed on error")
-
-    def test_cdp_kills_edge_on_poll_timeout(self):
-        """_extract_via_cdp kills Edge and raises when CDP port never opens."""
-        kill_calls = []
-
-        def run_side_effect(cmd, **kwargs):
-            cmd_str = " ".join(str(c) for c in cmd)
-            if "Stop-Process" in cmd_str:
-                kill_calls.append(cmd_str)
-            if "Start-Process" in cmd_str:
-                return MagicMock(returncode=0, stdout="7777\n", stderr="")
-            return MagicMock(returncode=0, stdout="", stderr="")
-
-        import requests as req_module
-
-        from cookie_extractor import _extract_via_cdp
-        with patch("cookie_extractor.subprocess.run", side_effect=run_side_effect), \
-             patch("cookie_extractor.requests.get", side_effect=req_module.RequestException("refused")), \
-             patch("cookie_extractor.time.sleep"):  # skip actual sleeping
+        with patch("cookie_extractor.subprocess.run",
+                   side_effect=self._make_mock_run(ps_returncode=1)), \
+             patch("pathlib.Path.write_text"):
             with self.assertRaises(RuntimeError) as ctx:
                 _extract_via_cdp("studentcentral.brighton.ac.uk")
+        self.assertIn("CDP extraction failed", str(ctx.exception))
 
-        self.assertIn("15 seconds", str(ctx.exception))
-        self.assertTrue(any("7777" in c for c in kill_calls), "Edge PID not killed on timeout")
+    def test_cdp_raises_on_empty_output(self):
+        """_extract_via_cdp raises RuntimeError when PowerShell succeeds but returns no JSON."""
+        from cookie_extractor import _extract_via_cdp
+        with patch("cookie_extractor.subprocess.run",
+                   side_effect=self._make_mock_run(ps_output="")), \
+             patch("pathlib.Path.write_text"):
+            with self.assertRaises(RuntimeError) as ctx:
+                _extract_via_cdp("studentcentral.brighton.ac.uk")
+        self.assertIn("no output", str(ctx.exception))
 
 
 if __name__ == '__main__':

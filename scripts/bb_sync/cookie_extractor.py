@@ -3,15 +3,9 @@ import subprocess
 import time
 from pathlib import Path
 from urllib.parse import urlparse
-import requests
-try:
-    import websocket
-except ImportError:
-    websocket = None  # type: ignore[assignment]
 from config import BB_BASE_URL, COOKIE_CACHE
 
-# This script runs on the WINDOWS Python side via powershell.exe
-# It extracts Edge cookies for the given domain using browser_cookie3
+# --- browser_cookie3 fallback (legacy, broken on Edge 127+ due to App-Bound Encryption) ---
 _WINDOWS_SCRIPT_LINES = [
     "import browser_cookie3, json, sys",
     "domain = sys.argv[1]",
@@ -20,9 +14,41 @@ _WINDOWS_SCRIPT_LINES = [
 ]
 _WINDOWS_SCRIPT = "; ".join(_WINDOWS_SCRIPT_LINES)
 
-
 _WINDOWS_MANUAL_EXPORT = "C:\\cookies_bb.json"
 _WINDOWS_MANUAL_EXPORT_WSL = "/mnt/c/cookies_bb.json"
+
+# --- CDP cookie extraction ---
+# Edge binds --remote-debugging-port to 127.0.0.1 (Windows loopback) which is not
+# reachable from WSL2. The CDP client therefore runs on Windows Python, same as
+# browser_cookie3, so it can connect to localhost:9222 directly.
+# Requires: pip install websocket-client  (in Windows Python)
+_CDP_WIN_SCRIPT = "\n".join([
+    "import time, json, sys, requests, websocket",
+    "domain = sys.argv[1]",
+    "base = 'http://localhost:9222'",
+    "ready = False",
+    "for _ in range(20):",
+    "    try:",
+    "        if requests.get(base+'/json/version', timeout=1).status_code == 200:",
+    "            ready = True; break",
+    "    except Exception: pass",
+    "    time.sleep(0.5)",
+    "if not ready: raise SystemExit('CDP not ready within 10s')",
+    "targets = requests.get(base+'/json', timeout=5).json()",
+    "pts = [t for t in targets if t.get('type') == 'page']",
+    "ws_url = (pts[0]['webSocketDebuggerUrl'] if pts",
+    "          else requests.get(base+'/json/new', timeout=5).json()['webSocketDebuggerUrl'])",
+    "ws = websocket.WebSocket()",
+    "ws.connect(ws_url, timeout=10); ws.settimeout(10)",
+    "ws.send(json.dumps({'id': 1, 'method': 'Network.getAllCookies'}))",
+    "r = json.loads(ws.recv()); ws.close()",
+    "print(json.dumps({c['name']: c['value'] for c in r['result']['cookies']",
+    "                  if domain in c.get('domain', '')}))",
+])
+
+# Written to Windows Temp (accessible from WSL via /mnt/c/...) before each CDP run
+_CDP_SCRIPT_WIN = r"C:\Windows\Temp\bb_cdp_extract.py"
+_CDP_SCRIPT_WSL = "/mnt/c/Windows/Temp/bb_cdp_extract.py"
 
 
 def _find_powershell() -> str:
@@ -45,129 +71,71 @@ def _require_sudo_auth() -> None:
     Raises RuntimeError if sudo -v fails.
     """
     subprocess.run(["sudo", "-k"])  # invalidate cached sudo timestamp (ignore errors)
-    result = subprocess.run(["sudo", "-v"])  # always prompts for password
+    result = subprocess.run(["sudo", "-v"])  # prompts for password
     if result.returncode != 0:
         raise RuntimeError("sudo authentication failed — cookie extraction aborted")
-
-
-def _kill_edge_pid(powershell: str, pid: str) -> None:
-    """Kill a Windows process by PID via PowerShell, silently."""
-    if pid and pid.strip():
-        subprocess.run(
-            [powershell, "-Command", f"Stop-Process -Id {pid.strip()} -Force -ErrorAction SilentlyContinue"],
-            capture_output=True,
-            timeout=5,
-        )
 
 
 def _extract_via_cdp(domain: str) -> dict:
     """
     Extract cookies via Chrome DevTools Protocol (bypasses App-Bound Encryption).
 
+    Edge binds the debug port to 127.0.0.1 (Windows loopback), so the CDP client
+    runs on Windows Python via PowerShell — same pattern as the browser_cookie3 script.
+    PowerShell launches Edge, runs the CDP script, then kills Edge in a finally block.
+
     Flow:
-    1. Prompt for sudo password (security gate).
-    2. Launch Edge hidden (non-headless) with the user's real profile + remote debug port 9222.
-    3. Poll localhost:9222 (and Windows gateway IP as fallback) until CDP is ready (up to 15 s).
-    4. Send Network.getAllCookies via WebSocket, filter to `domain`.
-    5. Kill Edge, return {name: value} dict.
+    1. Prompt for sudo password (WSL security gate).
+    2. Write CDP client script to C:\\Windows\\Temp\\bb_cdp_extract.py.
+    3. PowerShell: launch Edge hidden with real user profile + port 9222,
+       run Windows Python CDP script, kill Edge in finally.
+    4. Parse JSON output → {name: value} cookie dict.
 
-    Raises RuntimeError on any failure; Edge is always cleaned up.
+    Raises RuntimeError on any failure.
     """
-    if websocket is None:
-        raise RuntimeError(
-            "websocket-client not installed. Run: pip install websocket-client"
-        )
-
     _require_sudo_auth()
+
+    Path(_CDP_SCRIPT_WSL).write_text(_CDP_WIN_SCRIPT)
 
     powershell = _find_powershell()
 
-    # Launch Edge hidden (not headless — headless mode can suppress the debug port).
-    # -WindowStyle Hidden keeps it off the taskbar while still being a full browser process.
-    launch_cmd = (
+    # Launch Edge and run the CDP script in a single PowerShell command.
+    # PowerShell's try/finally ensures Edge is killed even if the script fails.
+    ps_cmd = (
+        '$e = if (Test-Path "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe") '
+        '{ "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe" } '
+        'else { "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe" }; '
         '$d = "$env:LOCALAPPDATA\\Microsoft\\Edge\\User Data"; '
-        '$p = Start-Process -FilePath msedge.exe '
+        '$p = Start-Process -FilePath $e '
         '-ArgumentList "--remote-debugging-port=9222","--user-data-dir=$d",'
         '"--no-first-run","--no-default-browser-check" '
-        '-WindowStyle Hidden -PassThru; Write-Output $p.Id'
+        f'-WindowStyle Hidden -PassThru; '
+        f'try {{ python "{_CDP_SCRIPT_WIN}" {domain} }} '
+        f'finally {{ Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }}'
     )
-    launch_result = subprocess.run(
-        [powershell, "-Command", launch_cmd],
+
+    result = subprocess.run(
+        [powershell, "-Command", ps_cmd],
         capture_output=True,
         text=True,
-        timeout=15,
+        timeout=45,  # Edge start + CDP poll (10 s) + extraction
     )
-    if launch_result.returncode != 0:
+
+    if result.returncode != 0:
         raise RuntimeError(
-            f"Failed to launch Edge for CDP: {launch_result.stderr.strip()}"
+            f"CDP extraction failed.\n{result.stderr.strip()}"
         )
 
-    edge_pid = launch_result.stdout.strip()
-
-    # WSL2 localhost forwarding usually works, but fall back to the Windows gateway IP
-    # (visible as the nameserver in /etc/resolv.conf) if localhost doesn't respond.
-    cdp_hosts = ["localhost"]
-    try:
-        gw = subprocess.run(
-            ["bash", "-c", "awk '/^nameserver/{print $2; exit}' /etc/resolv.conf"],
-            capture_output=True, text=True, timeout=3,
-        ).stdout.strip()
-        if gw and gw != "localhost":
-            cdp_hosts.append(gw)
-    except Exception:
-        pass
+    output = result.stdout.strip()
+    if not output:
+        raise RuntimeError(
+            "CDP script produced no output — Edge may have failed to start or cookies are empty"
+        )
 
     try:
-        cdp_base = None
-        for _ in range(30):  # up to 15 seconds
-            for host in cdp_hosts:
-                try:
-                    resp = requests.get(f"http://{host}:9222/json/version", timeout=1)
-                    if resp.status_code == 200:
-                        cdp_base = f"http://{host}:9222"
-                        break
-                except requests.RequestException:
-                    pass
-            if cdp_base:
-                break
-            time.sleep(0.5)
-        if cdp_base is None:
-            raise RuntimeError(
-                "Edge CDP port did not become available within 15 seconds. "
-                "Try closing any open Edge windows first."
-            )
-
-        targets = requests.get(f"{cdp_base}/json", timeout=5).json()
-        page_targets = [t for t in targets if t.get("type") == "page"]
-        try:
-            if page_targets:
-                ws_url = page_targets[0]["webSocketDebuggerUrl"]
-            else:
-                new_tab = requests.get(f"{cdp_base}/json/new", timeout=5).json()
-                ws_url = new_tab["webSocketDebuggerUrl"]
-        except (KeyError, IndexError) as e:
-            raise RuntimeError(f"Unexpected CDP target response: {e}") from e
-
-        ws = websocket.WebSocket()
-        ws.connect(ws_url, timeout=10)
-        ws.settimeout(10)
-        ws.send(json.dumps({"id": 1, "method": "Network.getAllCookies"}))
-        try:
-            result = json.loads(ws.recv())
-            all_cookies = result["result"]["cookies"]
-        except (KeyError, json.JSONDecodeError) as e:
-            raise RuntimeError(f"Unexpected CDP getAllCookies response: {e}") from e
-        finally:
-            ws.close()
-
-        return {
-            c["name"]: c["value"]
-            for c in all_cookies
-            if domain in c.get("domain", "")
-        }
-
-    finally:
-        _kill_edge_pid(powershell, edge_pid)
+        return json.loads(output)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"CDP script returned unexpected output: {output!r}") from e
 
 
 def extract_bb_cookies(force_refresh: bool = False) -> dict:
