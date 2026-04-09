@@ -19,6 +19,7 @@ class TestCookieExtractor(unittest.TestCase):
         """extract_bb_cookies falls back to browser_cookie3 when CDP raises."""
         fake_cookies = json.dumps({"BbRouter": "abc123", "JSESSIONID": "xyz"})
         with patch("cookie_extractor._extract_via_cdp", side_effect=RuntimeError("CDP unavailable")), \
+             patch("cookie_extractor.Path.exists", return_value=False), \
              patch("cookie_extractor.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout=fake_cookies, stderr="")
             result = extract_bb_cookies(force_refresh=True)

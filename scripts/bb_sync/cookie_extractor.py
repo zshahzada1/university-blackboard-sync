@@ -185,14 +185,18 @@ def extract_bb_cookies(force_refresh: bool = False) -> dict:
     manual = Path(_WINDOWS_MANUAL_EXPORT_WSL)
     if manual.exists():
         print(f"    [cookie-editor] Reading from {_WINDOWS_MANUAL_EXPORT_WSL}")
-        raw = json.loads(manual.read_text())
-        if isinstance(raw, list):
-            cookies = {c["name"]: c["value"] for c in raw if "name" in c and "value" in c}
-        else:
-            cookies = raw
-        cache.parent.mkdir(parents=True, exist_ok=True)
-        cache.write_text(json.dumps(cookies))
-        return cookies
+        try:
+            raw = json.loads(manual.read_text())
+            if isinstance(raw, list):
+                cookies = {c["name"]: c["value"] for c in raw if "name" in c and "value" in c}
+            else:
+                cookies = raw
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            cache.write_text(json.dumps(cookies))
+            return cookies
+        except (json.JSONDecodeError, OSError, KeyError) as e:
+            print(f"    [cookie-editor] Skipping malformed export file: {e}")
+            # fall through to browser_cookie3
 
     # --- Method 3: browser_cookie3 via Windows Python (legacy, broken on Edge 127+) ---
     powershell = _find_powershell()
