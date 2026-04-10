@@ -101,13 +101,13 @@ class TestExtractViaCdp(unittest.TestCase):
 
 
     def test_cdp_kills_edge_before_launching_with_debug_port(self):
-        """PS command must Stop-Process (kill) before Start-Process (launch Edge with debug port)."""
+        """PS command must Stop-Process (kill) before Start-Job (launch Edge via job to bypass singleton)."""
         from cookie_extractor import _CDP_PS_CMD
         kill_pos = _CDP_PS_CMD.find("Stop-Process")
-        start_pos = _CDP_PS_CMD.find("Start-Process")
+        launch_pos = _CDP_PS_CMD.find("Start-Job")
         self.assertGreater(kill_pos, -1, "PS command must contain Stop-Process")
-        self.assertGreater(start_pos, -1, "PS command must contain Start-Process")
-        self.assertLess(kill_pos, start_pos, "Stop-Process must appear before Start-Process")
+        self.assertGreater(launch_pos, -1, "PS command must use Start-Job to launch Edge")
+        self.assertLess(kill_pos, launch_pos, "Stop-Process must appear before Start-Job")
 
 if __name__ == '__main__':
     unittest.main()

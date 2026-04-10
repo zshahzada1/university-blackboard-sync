@@ -52,20 +52,37 @@ _CDP_SCRIPT_WSL = "/mnt/c/Windows/Temp/bb_cdp_extract.py"
 
 # PowerShell command template — {domain} is substituted at call time via .replace().
 # Uses .format(script=...) at module load, leaving {domain} as a literal placeholder.
-# Steps: kill existing Edge (releases profile lock) → launch hidden with debug port →
-#        try: run CDP script   finally: kill Edge.
+#
+# Launch strategy: Start-Job (NOT Start-Process) to bypass Edge's singleton detection.
+# Start-Process causes Edge to signal the existing singleton and exit without binding
+# the debug port. Start-Job runs Edge in a background job session, which avoids the
+# singleton check and makes Edge reliably bind --remote-debugging-port=9222.
+#
+# Steps: kill existing Edge → launch via Start-Job → try: run CDP script
+#        finally: stop job + kill all msedge.
 _CDP_PS_CMD = (
     'Stop-Process -Name msedge -Force -ErrorAction SilentlyContinue; '
     'Start-Sleep -Milliseconds 800; '
-    '$e = if (Test-Path "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe") '
+    '$ed = if (Test-Path "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe") '
     '{{ "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe" }} '
     'else {{ "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe" }}; '
-    '$d = "$env:LOCALAPPDATA\\Microsoft\\Edge\\User Data"; '
-    '$p = Start-Process -FilePath $e '
-    '-ArgumentList "--remote-debugging-port=9222","--user-data-dir=$d",'
-    '"--no-first-run","--no-default-browser-check" '
-    '-WindowStyle Hidden -PassThru; '
+    '$ud = "$env:LOCALAPPDATA\\Microsoft\\Edge\\User Data"; '
+    '$job = Start-Job -ArgumentList $ed, $ud {{ '
+    '  param($e, $d); '
+    '  & $e "--remote-debugging-port=9222" "--remote-allow-origins=*" "--user-data-dir=$d" "--no-first-run" "--no-default-browser-check" "about:blank" '
+    '}}; '
     'try {{ '
+    # Poll for CDP readiness in PowerShell before invoking Python.
+    # Edge can take 8-12s to start in a Start-Job context — poll up to 20s (40×0.5s).
+    # Use curl.exe (ships with Windows 10+) — more reliable than Invoke-WebRequest
+    # in non-interactive PowerShell sessions (avoids proxy/TLS policy issues).
+    '  $ok = $false; '
+    '  for ($i = 0; $i -lt 40; $i++) {{ '
+    '    $r = curl.exe -s -o NUL -w "%{{http_code}}" --max-time 1 http://localhost:9222/json/version 2>$null; '
+    '    if ($r -eq "200") {{ $ok = $true; break }}; '
+    '    Start-Sleep -Milliseconds 500 '
+    '  }}; '
+    '  if (-not $ok) {{ throw "CDP not ready within 20s" }}; '
     '  $py = $null; '
     '  foreach ($c in @("py", "python")) {{ '
     '    try {{ & $c --version 2>&1 | Out-Null; if ($LASTEXITCODE -eq 0) {{ $py = $c; break }} }} '
@@ -73,7 +90,11 @@ _CDP_PS_CMD = (
     '  }}; '
     '  if (-not $py) {{ throw "No Python found in Windows PATH" }}; '
     '  & $py "{script}" {{domain}} '
-    '}} finally {{ Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }}'
+    '}} finally {{ '
+    '  Stop-Job $job -ErrorAction SilentlyContinue; '
+    '  Remove-Job $job -ErrorAction SilentlyContinue; '
+    '  Stop-Process -Name msedge -Force -ErrorAction SilentlyContinue '
+    '}}'
 ).format(script=_CDP_SCRIPT_WIN)
 
 
@@ -109,7 +130,7 @@ def _extract_via_cdp(domain: str) -> dict:
         [powershell, "-Command", ps_cmd],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=90,  # Edge start (~8s) + CDP poll (20s) + extraction
     )
 
     if result.returncode != 0:
