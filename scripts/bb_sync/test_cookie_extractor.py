@@ -45,11 +45,8 @@ class TestExtractViaCdp(unittest.TestCase):
     """
 
     def _make_mock_run(self, ps_output=None, ps_returncode=0):
-        """sudo calls succeed; any PowerShell call returns ps_output / ps_returncode."""
+        """Return a subprocess.run side-effect that yields ps_output / ps_returncode."""
         def side_effect(cmd, **kwargs):
-            cmd_str = " ".join(str(c) for c in cmd)
-            if "sudo" in cmd_str:
-                return MagicMock(returncode=0, stdout="", stderr="")
             return MagicMock(returncode=ps_returncode,
                              stdout=ps_output or "", stderr="")
         return side_effect
