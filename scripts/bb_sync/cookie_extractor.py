@@ -63,19 +63,6 @@ def _find_powershell() -> str:
     )
 
 
-def _require_sudo_auth() -> None:
-    """Require sudo authentication before cookie extraction.
-
-    Invalidates any cached sudo timestamp (sudo -k) then validates credentials
-    (sudo -v), which prompts for a password unless NOPASSWD is configured.
-    Raises RuntimeError if sudo -v fails.
-    """
-    subprocess.run(["sudo", "-k"])  # invalidate cached sudo timestamp (ignore errors)
-    result = subprocess.run(["sudo", "-v"])  # prompts for password
-    if result.returncode != 0:
-        raise RuntimeError("sudo authentication failed — cookie extraction aborted")
-
-
 def _extract_via_cdp(domain: str) -> dict:
     """
     Extract cookies via Chrome DevTools Protocol (bypasses App-Bound Encryption).
@@ -85,16 +72,13 @@ def _extract_via_cdp(domain: str) -> dict:
     PowerShell launches Edge, runs the CDP script, then kills Edge in a finally block.
 
     Flow:
-    1. Prompt for sudo password (WSL security gate).
-    2. Write CDP client script to C:\\Windows\\Temp\\bb_cdp_extract.py.
-    3. PowerShell: launch Edge hidden with real user profile + port 9222,
+    1. Write CDP client script to C:\\Windows\\Temp\\bb_cdp_extract.py.
+    2. PowerShell: launch Edge hidden with real user profile + port 9222,
        run Windows Python CDP script, kill Edge in finally.
-    4. Parse JSON output → {name: value} cookie dict.
+    3. Parse JSON output → {name: value} cookie dict.
 
     Raises RuntimeError on any failure.
     """
-    _require_sudo_auth()
-
     Path(_CDP_SCRIPT_WSL).write_text(_CDP_WIN_SCRIPT)
 
     powershell = _find_powershell()

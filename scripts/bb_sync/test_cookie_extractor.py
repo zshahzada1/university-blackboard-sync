@@ -67,19 +67,20 @@ class TestExtractViaCdp(unittest.TestCase):
         self.assertEqual(result["BbRouter"], "tok123")
         self.assertEqual(result["JSESSIONID"], "sid456")
 
-    def test_cdp_sudo_failure_raises(self):
-        """_extract_via_cdp raises RuntimeError when sudo -v auth fails."""
-        def sudo_fails(cmd, **kwargs):
-            cmd_str = " ".join(str(c) for c in cmd)
-            if "sudo" in cmd_str and "-v" in cmd_str:
-                return MagicMock(returncode=1, stdout="", stderr="")
-            return MagicMock(returncode=0, stdout="", stderr="")
+    def test_cdp_does_not_call_sudo(self):
+        """_extract_via_cdp must NOT call sudo — it runs on Windows, sudo is irrelevant."""
+        cdp_output = json.dumps({"BbRouter": "tok123"})
 
         from cookie_extractor import _extract_via_cdp
-        with patch("cookie_extractor.subprocess.run", side_effect=sudo_fails):
-            with self.assertRaises(RuntimeError) as ctx:
-                _extract_via_cdp("studentcentral.brighton.ac.uk")
-        self.assertIn("sudo", str(ctx.exception).lower())
+        with patch("cookie_extractor.subprocess.run",
+                   side_effect=self._make_mock_run(ps_output=cdp_output)) as mock_run, \
+             patch("pathlib.Path.write_text"):
+            _extract_via_cdp("studentcentral.brighton.ac.uk")
+
+        for call in mock_run.call_args_list:
+            cmd = call[0][0]  # first positional arg is the command list
+            self.assertNotIn("sudo", " ".join(str(c) for c in cmd),
+                             "sudo must never be called from _extract_via_cdp")
 
     def test_cdp_raises_on_powershell_failure(self):
         """_extract_via_cdp raises RuntimeError when the PowerShell command exits non-zero."""
