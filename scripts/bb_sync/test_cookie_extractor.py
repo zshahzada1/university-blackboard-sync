@@ -100,5 +100,14 @@ class TestExtractViaCdp(unittest.TestCase):
         self.assertIn("no output", str(ctx.exception))
 
 
+    def test_cdp_kills_edge_before_launching_with_debug_port(self):
+        """PS command must Stop-Process (kill) before Start-Process (launch Edge with debug port)."""
+        from cookie_extractor import _CDP_PS_CMD
+        kill_pos = _CDP_PS_CMD.find("Stop-Process")
+        start_pos = _CDP_PS_CMD.find("Start-Process")
+        self.assertGreater(kill_pos, -1, "PS command must contain Stop-Process")
+        self.assertGreater(start_pos, -1, "PS command must contain Start-Process")
+        self.assertLess(kill_pos, start_pos, "Stop-Process must appear before Start-Process")
+
 if __name__ == '__main__':
     unittest.main()

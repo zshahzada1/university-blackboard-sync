@@ -50,6 +50,32 @@ _CDP_WIN_SCRIPT = "\n".join([
 _CDP_SCRIPT_WIN = r"C:\Windows\Temp\bb_cdp_extract.py"
 _CDP_SCRIPT_WSL = "/mnt/c/Windows/Temp/bb_cdp_extract.py"
 
+# PowerShell command template — {domain} is substituted at call time via .replace().
+# Uses .format(script=...) at module load, leaving {domain} as a literal placeholder.
+# Steps: kill existing Edge (releases profile lock) → launch hidden with debug port →
+#        try: run CDP script   finally: kill Edge.
+_CDP_PS_CMD = (
+    'Stop-Process -Name msedge -Force -ErrorAction SilentlyContinue; '
+    'Start-Sleep -Milliseconds 800; '
+    '$e = if (Test-Path "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe") '
+    '{{ "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe" }} '
+    'else {{ "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe" }}; '
+    '$d = "$env:LOCALAPPDATA\\Microsoft\\Edge\\User Data"; '
+    '$p = Start-Process -FilePath $e '
+    '-ArgumentList "--remote-debugging-port=9222","--user-data-dir=$d",'
+    '"--no-first-run","--no-default-browser-check" '
+    '-WindowStyle Hidden -PassThru; '
+    'try {{ '
+    '  $py = $null; '
+    '  foreach ($c in @("py", "python")) {{ '
+    '    try {{ & $c --version 2>&1 | Out-Null; if ($LASTEXITCODE -eq 0) {{ $py = $c; break }} }} '
+    '    catch {{}} '
+    '  }}; '
+    '  if (-not $py) {{ throw "No Python found in Windows PATH" }}; '
+    '  & $py "{script}" {{domain}} '
+    '}} finally {{ Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }}'
+).format(script=_CDP_SCRIPT_WIN)
+
 
 def _find_powershell() -> str:
     """Return the path to powershell.exe."""
@@ -67,42 +93,23 @@ def _extract_via_cdp(domain: str) -> dict:
     """
     Extract cookies via Chrome DevTools Protocol (bypasses App-Bound Encryption).
 
-    Edge binds the debug port to 127.0.0.1 (Windows loopback), so the CDP client
-    runs on Windows Python via PowerShell — same pattern as the browser_cookie3 script.
-    PowerShell launches Edge, runs the CDP script, then kills Edge in a finally block.
-
-    Flow:
-    1. Write CDP client script to C:\\Windows\\Temp\\bb_cdp_extract.py.
-    2. PowerShell: launch Edge hidden with real user profile + port 9222,
-       run Windows Python CDP script, kill Edge in finally.
-    3. Parse JSON output → {name: value} cookie dict.
+    Kills any running Edge processes first (releases profile lock), then launches
+    Edge hidden with the real user profile and --remote-debugging-port=9222.
+    A Windows Python CDP client connects and calls Network.getAllCookies.
+    Edge is killed in a PowerShell finally block regardless of outcome.
 
     Raises RuntimeError on any failure.
     """
     Path(_CDP_SCRIPT_WSL).write_text(_CDP_WIN_SCRIPT)
 
     powershell = _find_powershell()
-
-    # Launch Edge and run the CDP script in a single PowerShell command.
-    # PowerShell's try/finally ensures Edge is killed even if the script fails.
-    ps_cmd = (
-        '$e = if (Test-Path "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe") '
-        '{ "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe" } '
-        'else { "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe" }; '
-        '$d = "$env:LOCALAPPDATA\\Microsoft\\Edge\\User Data"; '
-        '$p = Start-Process -FilePath $e '
-        '-ArgumentList "--remote-debugging-port=9222","--user-data-dir=$d",'
-        '"--no-first-run","--no-default-browser-check" '
-        f'-WindowStyle Hidden -PassThru; '
-        f'try {{ python "{_CDP_SCRIPT_WIN}" {domain} }} '
-        f'finally {{ Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }}'
-    )
+    ps_cmd = _CDP_PS_CMD.replace("{domain}", domain)
 
     result = subprocess.run(
         [powershell, "-Command", ps_cmd],
         capture_output=True,
         text=True,
-        timeout=45,  # Edge start + CDP poll (10 s) + extraction
+        timeout=60,
     )
 
     if result.returncode != 0:
