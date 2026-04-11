@@ -17,6 +17,11 @@ _WINDOWS_SCRIPT = "; ".join(_WINDOWS_SCRIPT_LINES)
 _WINDOWS_MANUAL_EXPORT = "C:\\cookies_bb.json"
 _WINDOWS_MANUAL_EXPORT_WSL = "/mnt/c/cookies_bb.json"
 
+# Additional locations to check for manually exported cookies
+_WINDOWS_MANUAL_EXPORT_EXTRA_WSL = [
+    "/mnt/c/Users/zhbsh/cookies_bb.json",
+]
+
 # --- CDP cookie extraction ---
 # Edge binds --remote-debugging-port to 127.0.0.1 (Windows loopback) which is not
 # reachable from WSL2. The CDP client therefore runs on Windows Python, same as
@@ -43,7 +48,7 @@ _CDP_WIN_SCRIPT = "\n".join([
     "ws.send(json.dumps({'id': 1, 'method': 'Network.getAllCookies'}))",
     "r = json.loads(ws.recv()); ws.close()",
     "print(json.dumps({c['name']: c['value'] for c in r['result']['cookies']",
-    "                  if domain in c.get('domain', '')}))",
+    "                  if (lambda d: domain in d or d.lstrip('.') in domain)(c.get('domain', ''))}))",
 ])
 
 # Written to Windows Temp (accessible from WSL via /mnt/c/...) before each CDP run
@@ -180,9 +185,10 @@ def extract_bb_cookies(force_refresh: bool = False) -> dict:
         print("    [cdp] Falling back to alternative methods…")
 
     # --- Method 2: Manually exported Cookie-Editor JSON ---
-    manual = Path(_WINDOWS_MANUAL_EXPORT_WSL)
-    if manual.exists():
-        print(f"    [cookie-editor] Reading from {_WINDOWS_MANUAL_EXPORT_WSL}")
+    _manual_paths = [_WINDOWS_MANUAL_EXPORT_WSL] + _WINDOWS_MANUAL_EXPORT_EXTRA_WSL
+    manual = next((Path(p) for p in _manual_paths if Path(p).exists()), None)
+    if manual is not None:
+        print(f"    [cookie-editor] Reading from {manual}")
         try:
             raw = json.loads(manual.read_text())
             if isinstance(raw, list):
