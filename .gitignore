@@ -1,5 +1,11 @@
 .aider*
 __pycache__/
 *.pyc
+*.pyo
 .pytest_cache/
 .claude/
+.env
+.env.local
+*.egg-info/
+dist/
+build/

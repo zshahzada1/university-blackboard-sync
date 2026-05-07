@@ -29,6 +29,7 @@ class TestCookieExtractor(unittest.TestCase):
     def test_raises_when_all_methods_fail(self):
         """extract_bb_cookies raises RuntimeError when CDP and browser_cookie3 both fail."""
         with patch("cookie_extractor._extract_via_cdp", side_effect=RuntimeError("CDP unavailable")), \
+             patch("cookie_extractor._WINDOWS_MANUAL_EXPORT_EXTRA_WSL", []), \
              patch("cookie_extractor.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(
                 returncode=1, stdout="", stderr="ModuleNotFoundError: No module named 'browser_cookie3'"

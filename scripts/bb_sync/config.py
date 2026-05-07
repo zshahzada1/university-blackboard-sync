@@ -1,6 +1,14 @@
-BB_BASE_URL = "https://studentcentral.brighton.ac.uk"
-LOCAL_ROOT = "/home/zo/University"
-COOKIE_CACHE = "/home/zo/.cache/bb_sync/cookies.json"
+import os
+import re
+from pathlib import Path
+
+# Override any of these with environment variables:
+#   BB_BASE_URL   — your Blackboard instance URL
+#   BB_LOCAL_ROOT — where course folders are created (default: ~/University)
+#   BB_COOKIE_CACHE — where extracted cookies are cached (default: ~/.cache/bb_sync/cookies.json)
+BB_BASE_URL = os.environ.get("BB_BASE_URL", "https://studentcentral.brighton.ac.uk")
+LOCAL_ROOT = os.environ.get("BB_LOCAL_ROOT", str(Path.home() / "University"))
+COOKIE_CACHE = os.environ.get("BB_COOKIE_CACHE", str(Path.home() / ".cache" / "bb_sync" / "cookies.json"))
 
 # Maps Blackboard course name prefix → local subfolder name
 # The script will auto-detect codes like FA565, FN585, FA583 from course titles.
@@ -10,7 +18,6 @@ COURSE_OVERRIDES = {
 }
 
 # Regex to pull a module code from a BB course title, e.g. "FN585 - Corporate Finance"
-import re
 MODULE_CODE_RE = re.compile(r'\b([A-Z]{2,4}\d{3,4})\b')
 
 # Allowlist — only these module codes will be synced

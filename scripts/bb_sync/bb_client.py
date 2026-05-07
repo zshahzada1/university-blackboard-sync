@@ -68,6 +68,13 @@ class BlackboardClient:
                 return []  # content item has no attachments (link, quiz, etc.)
             raise
 
+    def get_content_body(self, course_id: str, content_id: str) -> str:
+        try:
+            data = self._get(f"/learn/api/public/v1/courses/{course_id}/contents/{content_id}")
+            return data.get("body", "")
+        except requests.HTTPError:
+            return ""
+
     def download_url(self, course_id: str, content_id: str, attachment_id: str) -> str:
         return (
             f"{self._base}/learn/api/public/v1/courses/{course_id}"
