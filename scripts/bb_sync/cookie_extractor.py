@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -66,16 +67,25 @@ _CDP_SCRIPT_WSL = "/mnt/c/Windows/Temp/bb_cdp_extract.py"
 # Steps: kill existing Edge → launch via Start-Job → try: run CDP script
 #        finally: stop job + kill all msedge.
 _CDP_PS_CMD = (
-    'Stop-Process -Name msedge -Force -ErrorAction SilentlyContinue; '
-    'Start-Sleep -Milliseconds 800; '
+    # Only kill and restart Edge if CDP is not already reachable on :9222.
+    # This preserves the user's open browser when they've already launched Edge
+    # with --remote-debugging-port=9222 themselves.
+    '$cdpReady = ($null -ne (curl.exe -s -o NUL -w "%{{http_code}}" --max-time 2 http://localhost:9222/json/version 2>$null) -and '
+    '(curl.exe -s -o NUL -w "%{{http_code}}" --max-time 2 http://localhost:9222/json/version 2>$null) -eq "200"); '
+    'if (-not $cdpReady) {{ '
+    '  Stop-Process -Name msedge -Force -ErrorAction SilentlyContinue; '
+    '  Start-Sleep -Milliseconds 800 '
+    '}}; '
     '$ed = if (Test-Path "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe") '
     '{{ "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe" }} '
     'else {{ "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe" }}; '
     '$ud = "$env:LOCALAPPDATA\\Microsoft\\Edge\\User Data"; '
-    '$job = Start-Job -ArgumentList $ed, $ud {{ '
-    '  param($e, $d); '
-    '  & $e "--remote-debugging-port=9222" "--remote-allow-origins=*" "--user-data-dir=$d" "--no-first-run" "--no-default-browser-check" "about:blank" '
-    '}}; '
+    '$job = if (-not $cdpReady) {{ '
+    '  Start-Job -ArgumentList $ed, $ud {{ '
+    '    param($e, $d); '
+    '    & $e "--remote-debugging-port=9222" "--remote-allow-origins=*" "--user-data-dir=$d" "--no-first-run" "--no-default-browser-check" "about:blank" '
+    '  }} '
+    '}} else {{ $null }}; '
     'try {{ '
     # Poll for CDP readiness in PowerShell before invoking Python.
     # Edge can take 8-12s to start in a Start-Job context — poll up to 20s (40×0.5s).
@@ -96,11 +106,56 @@ _CDP_PS_CMD = (
     '  if (-not $py) {{ throw "No Python found in Windows PATH" }}; '
     '  & $py "{script}" {{domain}} '
     '}} finally {{ '
-    '  Stop-Job $job -ErrorAction SilentlyContinue; '
-    '  Remove-Job $job -ErrorAction SilentlyContinue; '
-    '  Stop-Process -Name msedge -Force -ErrorAction SilentlyContinue '
+    '  if ($job) {{ Stop-Job $job -ErrorAction SilentlyContinue; Remove-Job $job -ErrorAction SilentlyContinue }} '
     '}}'
 ).format(script=_CDP_SCRIPT_WIN)
+
+
+_BROWSER_HARNESS_SCRIPT = "\n".join([
+    "import json",
+    "result = cdp('Network.getAllCookies', {})",
+    "cookies = result.get('cookies', [])",
+    "bb = {c['name']: c['value'] for c in cookies if '__DOMAIN__' in c.get('domain', '')}",
+    "print(json.dumps(bb))",
+])
+
+
+def _extract_via_browser_harness(domain: str) -> dict:
+    """
+    Extract cookies via browser-harness connecting to Edge's CDP endpoint on 127.0.0.1:9222.
+    Requires Edge to be running with --remote-debugging-port=9222.
+    Raises RuntimeError on failure.
+    """
+    env = os.environ.copy()
+    env["PATH"] = f"{Path.home() / '.local/bin'}:{env.get('PATH', '')}"
+    env["BU_CDP_URL"] = "http://127.0.0.1:9222"
+
+    script = _BROWSER_HARNESS_SCRIPT.replace("__DOMAIN__", domain)
+
+    result = subprocess.run(
+        ["browser-harness", "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=env,
+    )
+
+    if result.returncode != 0:
+        raise RuntimeError(f"browser-harness failed: {result.stderr.strip()}")
+
+    output = result.stdout.strip()
+    if not output:
+        raise RuntimeError("browser-harness produced no output — Edge may not be running with --remote-debugging-port=9222")
+
+    try:
+        cookies = json.loads(output)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"browser-harness returned unexpected output: {output!r}") from e
+
+    if not cookies:
+        raise RuntimeError("No Brighton cookies found — make sure you are logged into Blackboard in Edge")
+
+    return cookies
 
 
 def _find_powershell() -> str:
@@ -173,7 +228,18 @@ def extract_bb_cookies(force_refresh: bool = False) -> dict:
 
     domain = urlparse(BB_BASE_URL).netloc  # studentcentral.brighton.ac.uk
 
-    # --- Method 1: Chrome DevTools Protocol (bypasses App-Bound Encryption) ---
+    # --- Method 1: browser-harness via WSL2 CDP (127.0.0.1:9222) ---
+    try:
+        print("    [browser-harness] Extracting cookies via browser-harness…")
+        cookies = _extract_via_browser_harness(domain)
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps(cookies))
+        return cookies
+    except RuntimeError as e:
+        print(f"    [browser-harness] Failed: {e}")
+        print("    [browser-harness] Falling back to Windows CDP…")
+
+    # --- Method 2: Chrome DevTools Protocol via Windows PowerShell ---
     try:
         print("    [cdp] Extracting cookies via Chrome DevTools Protocol…")
         cookies = _extract_via_cdp(domain)
@@ -184,7 +250,7 @@ def extract_bb_cookies(force_refresh: bool = False) -> dict:
         print(f"    [cdp] CDP failed: {e}")
         print("    [cdp] Falling back to alternative methods…")
 
-    # --- Method 2: Manually exported Cookie-Editor JSON ---
+    # --- Method 3: Manually exported Cookie-Editor JSON ---
     _manual_paths = [_WINDOWS_MANUAL_EXPORT_WSL] + _WINDOWS_MANUAL_EXPORT_EXTRA_WSL
     manual = next((Path(p) for p in _manual_paths if Path(p).exists()), None)
     if manual is not None:
@@ -202,7 +268,7 @@ def extract_bb_cookies(force_refresh: bool = False) -> dict:
             print(f"    [cookie-editor] Skipping malformed export file: {e}")
             # fall through to browser_cookie3
 
-    # --- Method 3: browser_cookie3 via Windows Python (legacy, broken on Edge 127+) ---
+    # --- Method 4: browser_cookie3 via Windows Python (legacy, broken on Edge 127+) ---
     powershell = _find_powershell()
     ps_command = f"python -c '{_WINDOWS_SCRIPT}' {domain}"
     result = subprocess.run(
