@@ -6,10 +6,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from config import BB_BASE_URL, LOCAL_ROOT, local_path_for_course, should_sync_course, MODULE_CODE_RE
+from config import BB_BASE_URL, LOCAL_ROOT, local_path_for_course, should_sync_course, MODULE_CODE_RE, ASSESSMENTS_PATH, GRADES_PATH
 from cookie_extractor import extract_bb_cookies
 from bb_client import BlackboardClient
 from syncer import Syncer
+from grades import GradeSyncer
 
 
 def main():
@@ -18,6 +19,8 @@ def main():
                         help="Force re-extract cookies from Edge")
     parser.add_argument("--list-courses", action="store_true",
                         help="Output enrolled courses as JSON and exit")
+    parser.add_argument("--grades", action="store_true",
+                        help="Sync grades only (skip file content-tree walk)")
     parser.add_argument("--modules", nargs="+", metavar="CODE",
                         help="Module codes to sync (overrides config allowlist)")
     args = parser.parse_args()
@@ -72,6 +75,27 @@ def main():
                 "code": match.group(1) if match else None,
             })
         print(json.dumps(result))
+        sys.exit(0)
+
+    if args.grades:
+        print("Running grade sync…", file=out)
+        assessments_path = Path(ASSESSMENTS_PATH)
+        if not assessments_path.exists():
+            print(f"ERROR: assessments.json not found at {assessments_path}", file=out)
+            print("Create it from the briefs before running --grades.", file=out)
+            sys.exit(1)
+        grades_path = Path(GRADES_PATH)
+        grade_syncer = GradeSyncer(client, assessments_path, grades_path)
+        result = grade_syncer.sync(user_id)
+        for code, data in result.items():
+            if code == "synced_at":
+                continue
+            if "error" in data:
+                print(f"  {code}: {data['error']}", file=out)
+            else:
+                graded = sum(1 for c in data.get("columns", []) if c["status"] == "graded")
+                print(f"  {code}: {graded}/{len(data.get('columns', []))} columns graded", file=out)
+        print(f"\nGrades written to {grades_path}", file=out)
         sys.exit(0)
 
     # Determine filter set: explicit --modules overrides config allowlist
