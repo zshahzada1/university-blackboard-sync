@@ -9,6 +9,14 @@ from pathlib import Path
 BB_BASE_URL = os.environ.get("BB_BASE_URL", "https://studentcentral.brighton.ac.uk")
 LOCAL_ROOT = os.environ.get("BB_LOCAL_ROOT", str(Path.home() / "University"))
 COOKIE_CACHE = os.environ.get("BB_COOKIE_CACHE", str(Path.home() / ".cache" / "bb_sync" / "cookies.json"))
+ASSESSMENTS_PATH = os.environ.get(
+    "BB_ASSESSMENTS_PATH",
+    str(Path.home() / "University" / "dashboard" / "backend" / "data" / "assessments.json")
+)
+GRADES_PATH = os.environ.get(
+    "BB_GRADES_PATH",
+    str(Path.home() / "University" / "dashboard" / "backend" / "data" / "grades.json")
+)
 
 # Maps Blackboard course name prefix → local subfolder name
 # The script will auto-detect codes like FA565, FN585, FA583 from course titles.

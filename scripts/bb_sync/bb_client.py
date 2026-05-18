@@ -68,6 +68,37 @@ class BlackboardClient:
                 return []  # content item has no attachments (link, quiz, etc.)
             raise
 
+    def get_gradebook_columns(self, course_id: str) -> list | None:
+        """Returns list of {id, name, possible} or None on 403/404."""
+        try:
+            data = self._get(f"/learn/api/public/v2/courses/{course_id}/gradebook/columns",
+                             params={"limit": 200})
+            return [
+                {
+                    "id": col["id"],
+                    "name": col.get("name", ""),
+                    "possible": (col.get("score") or {}).get("possible"),
+                }
+                for col in data.get("results", [])
+            ]
+        except requests.HTTPError as e:
+            if e.response.status_code in (403, 404):
+                return None
+            raise
+
+    def get_column_grade(self, course_id: str, column_id: str, user_id: str) -> dict:
+        """Returns {score: float|None}. Score is None if not yet attempted."""
+        try:
+            data = self._get(
+                f"/learn/api/public/v2/courses/{course_id}"
+                f"/gradebook/columns/{column_id}/users/{user_id}"
+            )
+            return {"score": data.get("score")}
+        except requests.HTTPError as e:
+            if e.response.status_code in (403, 404):
+                return {"score": None}
+            raise
+
     def get_content_body(self, course_id: str, content_id: str) -> str:
         try:
             data = self._get(f"/learn/api/public/v1/courses/{course_id}/contents/{content_id}")

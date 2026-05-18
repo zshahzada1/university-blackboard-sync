@@ -2,6 +2,7 @@
 import sys
 import unittest
 from unittest.mock import patch, MagicMock
+import requests
 sys.path.insert(0, '.')
 from bb_client import BlackboardClient
 
@@ -137,6 +138,44 @@ class TestBlackboardClient(unittest.TestCase):
             results = client.get_contents("_c_1")
 
         self.assertEqual(results, [{"id": "_1_1", "title": "Week 1"}])
+
+MOCK_COLUMNS = {"results": [
+    {"id": "_col1_1", "name": "Task 1", "score": {"possible": 100.0}},
+    {"id": "_col2_1", "name": "Task 2", "score": {"possible": 100.0}},
+]}
+MOCK_GRADE = {"score": 68.0, "status": "Graded"}
+
+class TestBlackboardClientGradebook(unittest.TestCase):
+    def _make_client(self):
+        return BlackboardClient({"BbRouter": "fake", "JSESSIONID": "fake"})
+
+    def test_get_gradebook_columns_success(self):
+        client = self._make_client()
+        with patch.object(client, '_get', return_value=MOCK_COLUMNS):
+            cols = client.get_gradebook_columns("_130565_1")
+        self.assertEqual(len(cols), 2)
+        self.assertEqual(cols[0]["id"], "_col1_1")
+        self.assertEqual(cols[0]["name"], "Task 1")
+        self.assertEqual(cols[0]["possible"], 100.0)
+
+    def test_get_gradebook_columns_403_returns_none(self):
+        client = self._make_client()
+        err = requests.HTTPError(response=MagicMock(status_code=403))
+        with patch.object(client, '_get', side_effect=err):
+            result = client.get_gradebook_columns("_130565_1")
+        self.assertIsNone(result)
+
+    def test_get_column_grade_returns_score(self):
+        client = self._make_client()
+        with patch.object(client, '_get', return_value=MOCK_GRADE):
+            grade = client.get_column_grade("_130565_1", "_col1_1", "_user_1")
+        self.assertEqual(grade["score"], 68.0)
+
+    def test_get_column_grade_ungraded_returns_none_score(self):
+        client = self._make_client()
+        with patch.object(client, '_get', return_value={"status": "NotAttempted"}):
+            grade = client.get_column_grade("_130565_1", "_col1_1", "_user_1")
+        self.assertIsNone(grade["score"])
 
 if __name__ == '__main__':
     unittest.main()
