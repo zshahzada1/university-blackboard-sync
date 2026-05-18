@@ -20,8 +20,6 @@ class _AttachmentLinkParser(HTMLParser):
         if tag != "a":
             return
         attrs_dict = dict(attrs)
-        if attrs_dict.get("data-bbtype") != "attachment":
-            return
         raw = attrs_dict.get("data-bbfile", "")
         if not raw:
             return
@@ -31,7 +29,8 @@ class _AttachmentLinkParser(HTMLParser):
             return
         if bbfile.get("isDecorative") or bbfile.get("render") == "inlineOnly":
             return
-        file_name = bbfile.get("fileName") or bbfile.get("displayName")
+        # fileName/displayName for data-bbtype="attachment" style; linkName for bare embed style
+        file_name = bbfile.get("fileName") or bbfile.get("displayName") or bbfile.get("linkName")
         # Prefer href (stable bbcswebdav URL) over resourceUrl (may be a short-lived session URL)
         href = attrs_dict.get("href", "")
         resource_url = href if href else bbfile.get("resourceUrl", "")

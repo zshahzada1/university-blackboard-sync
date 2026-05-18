@@ -117,6 +117,28 @@ class TestDownloadInlineAttachments(unittest.TestCase):
             self.syncer._download_inline_attachments(body, Path(self.tmpdir))
             mock_sess.assert_not_called()
 
+    def test_downloads_bare_embed_style(self):
+        """Attachments with no data-bbtype, only linkName in data-bbfile (FA583-style)."""
+        import json as _json
+        import html as _html
+        bbfile = _json.dumps({
+            "linkName": "FA583 Exam Paper.pdf",
+            "mimeType": "application/pdf",
+            "alternativeText": "FA583 Exam Paper.pdf",
+        })
+        body = f'<a data-bbfile="{_html.escape(bbfile)}" href="https://fake/exam.pdf"></a>'
+        fake_resp = MagicMock()
+        fake_resp.iter_content.return_value = [b"pdfdata"]
+        fake_resp.raise_for_status = MagicMock()
+        fake_resp.__enter__ = MagicMock(return_value=fake_resp)
+        fake_resp.__exit__ = MagicMock(return_value=False)
+        with patch("syncer.requests.Session") as mock_sess:
+            mock_sess.return_value.__enter__ = MagicMock(return_value=mock_sess.return_value)
+            mock_sess.return_value.__exit__ = MagicMock(return_value=False)
+            mock_sess.return_value.get.return_value = fake_resp
+            self.syncer._download_inline_attachments(body, Path(self.tmpdir))
+        self.assertTrue((Path(self.tmpdir) / "FA583 Exam Paper.pdf").exists())
+
 
 class TestSaveBodyInlineAttachments(unittest.TestCase):
     def setUp(self):

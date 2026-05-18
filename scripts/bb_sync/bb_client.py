@@ -93,7 +93,8 @@ class BlackboardClient:
                 f"/learn/api/public/v2/courses/{course_id}"
                 f"/gradebook/columns/{column_id}/users/{user_id}"
             )
-            return {"score": data.get("score")}
+            score = data.get("score") or (data.get("displayGrade") or {}).get("score")
+            return {"score": score}
         except requests.HTTPError as e:
             if e.response.status_code in (403, 404):
                 return {"score": None}

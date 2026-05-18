@@ -86,7 +86,7 @@ def main():
             sys.exit(1)
         grades_path = Path(GRADES_PATH)
         grade_syncer = GradeSyncer(client, assessments_path, grades_path)
-        result = grade_syncer.sync(user_id)
+        result = grade_syncer.sync(user_id, modules=args.modules)
         for code, data in result.items():
             if code == "synced_at":
                 continue
@@ -129,6 +129,22 @@ def main():
             print(f"  [error] Failed to sync {course_name}: {e}")
 
     print("\nSync complete.")
+
+    assessments_path = Path(ASSESSMENTS_PATH)
+    if assessments_path.exists():
+        print("\nRunning grade sync…")
+        grades_path = Path(GRADES_PATH)
+        grade_syncer = GradeSyncer(client, assessments_path, grades_path)
+        result = grade_syncer.sync(user_id, modules=None)  # always sync all modules
+        for code, data in result.items():
+            if code == "synced_at":
+                continue
+            if "error" in data:
+                print(f"  {code}: {data['error']}")
+            else:
+                graded = sum(1 for c in data.get("columns", []) if c["status"] == "graded")
+                print(f"  {code}: {graded}/{len(data.get('columns', []))} columns graded")
+        print(f"Grades written to {grades_path}")
 
 
 if __name__ == "__main__":

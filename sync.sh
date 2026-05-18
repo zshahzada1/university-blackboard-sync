@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cd "$(dirname "$0")/scripts"
-exec python3 -m bb_sync "$@"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR/scripts"
+VENV="$SCRIPT_DIR/scripts/.venv/bin/python"
+PYTHON="${VENV:-python3}"
+exec "$PYTHON" -m bb_sync "$@"

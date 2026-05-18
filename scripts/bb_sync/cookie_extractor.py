@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import time
+import urllib.request
 from pathlib import Path
 from urllib.parse import urlparse
 from config import BB_BASE_URL, COOKIE_CACHE
@@ -111,6 +112,70 @@ _CDP_PS_CMD = (
 ).format(script=_CDP_SCRIPT_WIN)
 
 
+def _cdp_reachable(timeout: float = 3.0) -> bool:
+    """Return True if Edge's CDP port is reachable on 127.0.0.1:9222."""
+    try:
+        urllib.request.urlopen("http://127.0.0.1:9222/json/version", timeout=timeout)
+        return True
+    except Exception:
+        return False
+
+
+def _extract_via_wsl_cdp(domain: str) -> dict:
+    """
+    Extract cookies directly from Edge via CDP WebSocket, running entirely in WSL2 Python.
+    Requires websocket-client (pip install websocket-client) and Edge running with
+    --remote-debugging-port=9222 reachable on 127.0.0.1 (WSL2 mirrored networking).
+    Raises RuntimeError on any failure.
+    """
+    try:
+        import websocket as _ws
+    except ImportError as e:
+        raise RuntimeError("websocket-client not installed — run: pip install websocket-client") from e
+
+    if not _cdp_reachable(timeout=3.0):
+        raise RuntimeError("CDP at 127.0.0.1:9222 not reachable — Edge not running with debug port")
+
+    try:
+        raw = urllib.request.urlopen("http://127.0.0.1:9222/json", timeout=5).read()
+        targets = json.loads(raw)
+    except Exception as e:
+        raise RuntimeError(f"Could not list CDP targets: {e}") from e
+
+    pages = [t for t in targets if t.get("type") == "page"]
+    if pages:
+        ws_url = pages[0]["webSocketDebuggerUrl"]
+    else:
+        try:
+            new_raw = urllib.request.urlopen("http://127.0.0.1:9222/json/new", timeout=5).read()
+            ws_url = json.loads(new_raw)["webSocketDebuggerUrl"]
+        except Exception as e:
+            raise RuntimeError(f"No CDP page targets available: {e}") from e
+
+    # Replace 'localhost' with '127.0.0.1' so it routes through WSL2 mirrored networking
+    ws_url = ws_url.replace("localhost", "127.0.0.1")
+
+    try:
+        ws = _ws.WebSocket()
+        ws.connect(ws_url, timeout=10)
+        ws.settimeout(10)
+        ws.send(json.dumps({"id": 1, "method": "Network.getAllCookies"}))
+        result = json.loads(ws.recv())
+        ws.close()
+    except Exception as e:
+        raise RuntimeError(f"CDP WebSocket call failed: {e}") from e
+
+    cookies_raw = result.get("result", {}).get("cookies", [])
+    filtered = {
+        c["name"]: c["value"]
+        for c in cookies_raw
+        if domain in c.get("domain", "") or c.get("domain", "").lstrip(".") in domain
+    }
+    if not filtered:
+        raise RuntimeError(f"No cookies found for {domain} — make sure you are logged into Blackboard in Edge")
+    return filtered
+
+
 _BROWSER_HARNESS_SCRIPT = "\n".join([
     "import json",
     "result = cdp('Network.getAllCookies', {})",
@@ -126,6 +191,9 @@ def _extract_via_browser_harness(domain: str) -> dict:
     Requires Edge to be running with --remote-debugging-port=9222.
     Raises RuntimeError on failure.
     """
+    if not _cdp_reachable(timeout=3.0):
+        raise RuntimeError("CDP at 127.0.0.1:9222 not reachable — skipping browser-harness")
+
     env = os.environ.copy()
     env["PATH"] = f"{Path.home() / '.local/bin'}:{env.get('PATH', '')}"
     env["BU_CDP_URL"] = "http://127.0.0.1:9222"
@@ -213,7 +281,12 @@ def _extract_via_cdp(domain: str) -> dict:
 def extract_bb_cookies(force_refresh: bool = False) -> dict:
     """
     Extract Edge session cookies for BB_BASE_URL.
-    Tries methods in order: CDP (primary) → manual Cookie-Editor export → browser_cookie3.
+    Tries methods in order:
+      1. Direct WSL2 CDP (websocket-client, fastest, no daemon)
+      2. browser-harness via 127.0.0.1:9222 (only if CDP reachable)
+      3. Chrome DevTools Protocol via Windows PowerShell (kills/restarts Edge)
+      4. Manually exported Cookie-Editor JSON
+      5. browser_cookie3 via Windows Python (legacy, broken on Edge 127+)
     Caches result to COOKIE_CACHE for 1 hour. Returns dict of {name: value}.
     Raises RuntimeError if all methods fail.
     """
@@ -228,7 +301,17 @@ def extract_bb_cookies(force_refresh: bool = False) -> dict:
 
     domain = urlparse(BB_BASE_URL).netloc  # studentcentral.brighton.ac.uk
 
-    # --- Method 1: browser-harness via WSL2 CDP (127.0.0.1:9222) ---
+    # --- Method 1: Direct WSL2 CDP via websocket-client (fastest, no daemon overhead) ---
+    try:
+        print("    [wsl-cdp] Extracting cookies directly via CDP WebSocket…")
+        cookies = _extract_via_wsl_cdp(domain)
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps(cookies))
+        return cookies
+    except RuntimeError as e:
+        print(f"    [wsl-cdp] Failed: {e}")
+
+    # --- Method 2: browser-harness via WSL2 CDP (127.0.0.1:9222) ---
     try:
         print("    [browser-harness] Extracting cookies via browser-harness…")
         cookies = _extract_via_browser_harness(domain)
@@ -239,7 +322,7 @@ def extract_bb_cookies(force_refresh: bool = False) -> dict:
         print(f"    [browser-harness] Failed: {e}")
         print("    [browser-harness] Falling back to Windows CDP…")
 
-    # --- Method 2: Chrome DevTools Protocol via Windows PowerShell ---
+    # --- Method 3: Chrome DevTools Protocol via Windows PowerShell ---
     try:
         print("    [cdp] Extracting cookies via Chrome DevTools Protocol…")
         cookies = _extract_via_cdp(domain)
@@ -250,7 +333,7 @@ def extract_bb_cookies(force_refresh: bool = False) -> dict:
         print(f"    [cdp] CDP failed: {e}")
         print("    [cdp] Falling back to alternative methods…")
 
-    # --- Method 3: Manually exported Cookie-Editor JSON ---
+    # --- Method 4: Manually exported Cookie-Editor JSON ---
     _manual_paths = [_WINDOWS_MANUAL_EXPORT_WSL] + _WINDOWS_MANUAL_EXPORT_EXTRA_WSL
     manual = next((Path(p) for p in _manual_paths if Path(p).exists()), None)
     if manual is not None:
@@ -268,7 +351,7 @@ def extract_bb_cookies(force_refresh: bool = False) -> dict:
             print(f"    [cookie-editor] Skipping malformed export file: {e}")
             # fall through to browser_cookie3
 
-    # --- Method 4: browser_cookie3 via Windows Python (legacy, broken on Edge 127+) ---
+    # --- Method 5: browser_cookie3 via Windows Python (legacy, broken on Edge 127+) ---
     powershell = _find_powershell()
     ps_command = f"python -c '{_WINDOWS_SCRIPT}' {domain}"
     result = subprocess.run(
